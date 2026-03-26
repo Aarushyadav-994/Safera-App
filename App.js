@@ -138,58 +138,57 @@ export default function App() {
         const routes = await fetchRealRoute(startPoint, endPoint);
         
         console.log("4. Routes fetched. Calculating GPS-seeded safety data...");
-        if (routes && routes.length > 0) {
-          
-          const roundedDistances = routes.map(r => Math.round(r.distance / 100) * 100);
-          const uniqueDistances = [...new Set(roundedDistances)].sort((a, b) => b - a); 
+        // ... inside handleFindRoute, after fetching routes:
+  if (routes && routes.length > 0) {
+    // 1. Group by 100m to catch overlapping paths
+    const roundedDistances = routes.map(r => Math.round(r.distance / 100) * 100);
+    // 2. Sort distances: DESCENDING (Longest [Safe] first)
+    const uniqueDistances = [...new Set(roundedDistances)].sort((a, b) => b - a); 
 
-          let processedRoutes = routes.map((route) => {
-            const roundedDist = Math.round(route.distance / 100) * 100;
-            const tierIndex = uniqueDistances.indexOf(roundedDist); 
-            
-            const midIndex = Math.floor(route.coords.length / 2);
-            const midCoord = route.coords[midIndex];
-            
-            const seedStr = `${midCoord.latitude.toFixed(3)}-${midCoord.longitude.toFixed(3)}-${tierIndex}`;
-            let hash = 0;
-            for (let i = 0; i < seedStr.length; i++) {
-              hash = Math.imul(31, hash) + seedStr.charCodeAt(i) | 0;
-            }
-            const seed = Math.abs(hash % 10000) / 10000; 
+    let processedRoutes = routes.map((route) => {
+      const roundedDist = Math.round(route.distance / 100) * 100;
+      // tierIndex 0 = Longest (Safe), 1 = Balanced, 2 = Shortest (Risky)
+      const tierIndex = uniqueDistances.indexOf(roundedDist); 
+      
+      // Create the deterministic seed based on GPS
+      const midCoord = route.coords[Math.floor(route.coords.length / 2)];
+      const seedStr = `${midCoord.latitude.toFixed(3)}-${midCoord.longitude.toFixed(3)}-${tierIndex}`;
+      let hash = 0;
+      for (let i = 0; i < seedStr.length; i++) {
+        hash = Math.imul(31, hash) + seedStr.charCodeAt(i) | 0;
+      }
+      const seed = Math.abs(hash % 10000) / 10000; 
 
-            const score = calculateSafetyScore(tierIndex, seed);
-            
-            let numDangerZones = tierIndex === 0 ? Math.floor(seed * 2) : 
-                                 tierIndex === 1 ? Math.floor(seed * 2) + 2 : 
-                                 Math.floor(seed * 3) + 4;
+      // CALLING YOUR FORMULA ENGINE
+      const score = calculateSafetyScore(tierIndex, seed);
+      
+      // Generate Danger Zones based on tierIndex
+      let numDangerZones = tierIndex === 0 ? Math.floor(seed * 2) : 
+                          tierIndex === 1 ? Math.floor(seed * 2) + 2 : 
+                          Math.floor(seed * 3) + 4;
 
-            const dangerZones = [];
-            const coordsLen = route.coords.length;
-            
-            if (coordsLen > 10) {
-              for (let i = 0; i < numDangerZones; i++) {
-                const pointSeed = Math.abs((hash * (i + 13)) % 10000) / 10000;
-                const randomIndex = Math.floor(pointSeed * (coordsLen - 4)) + 2;
-                dangerZones.push(route.coords[randomIndex]);
-              }
-            }
+      const dangerZones = [];
+      if (route.coords.length > 10) {
+        for (let i = 0; i < numDangerZones; i++) {
+          const pSeed = Math.abs((hash * (i + 13)) % 10000) / 10000;
+          dangerZones.push(route.coords[Math.floor(pSeed * (route.coords.length - 4)) + 2]);
+        }
+      }
 
-            return { ...route, safetyScore: score, dangerZones };
-          });
+      return { ...route, safetyScore: score, dangerZones };
+    });
 
-          // Sort highest score to the top
-          processedRoutes.sort((a, b) => b.safetyScore - a.safetyScore);
-          setAllRoutes(processedRoutes);
-          setSelectedRouteIndex(0);
-          setIsMinimized(true);
-
-          if (mapRef.current) {
-            mapRef.current.fitToCoordinates(routes[0].coords, {
-              edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
-              animated: true,
-            });
-          }
-        } else {
+    // Finally, sort by safetyScore so the UI always defaults to the Green route
+    processedRoutes.sort((a, b) => b.safetyScore - a.safetyScore);
+    setAllRoutes(processedRoutes);
+    setSelectedRouteIndex(0);
+    setIsMinimized(true);
+    
+    mapRef.current?.fitToCoordinates(routes[0].coords, {
+      edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
+      animated: true,
+    });
+} else {
           console.warn("API returned empty routes.");
           setAllRoutes([]);
         }

@@ -599,8 +599,7 @@ const styles = StyleSheet.create({
   subStatus: { fontSize: 10, marginTop: 4 },
   dotStart: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#3498db', borderWidth: 2, borderColor: '#FFF' },
   dotEnd: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#FFF' },
-  dangerIconContainer: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#FFF', elevation: 4 }
-});
+  dangerIconContainer: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#FFF', elevation: 4 },
   profileModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   profileModal: { minHeight: height * 0.72, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24 },
   profileHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },

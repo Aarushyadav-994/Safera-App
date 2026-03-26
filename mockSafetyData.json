@@ -1,0 +1,26 @@
+[
+  {
+    "name": "IGDTUW Main Gate",
+    "latitude": 28.6652,
+    "longitude": 77.2324,
+    "crime_score": 2,
+    "lighting": 9,
+    "crowd": 8
+  },
+  {
+    "name": "Kashmere Gate Metro Exit 1",
+    "latitude": 28.6675,
+    "longitude": 77.2285,
+    "crime_score": 4,
+    "lighting": 8,
+    "crowd": 10
+  },
+  {
+    "name": "Old Delhi St. Dark Alley",
+    "latitude": 28.6640,
+    "longitude": 77.2300,
+    "crime_score": 7,
+    "lighting": 2,
+    "crowd": 1
+  }
+]

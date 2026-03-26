@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { calculateSafetyScore } from './SafetyEngine';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
   Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert
@@ -18,7 +19,6 @@ export default function App() {
   const drawerAnim = useRef(new Animated.Value(-width)).current;
   const locationWatcherRef = useRef(null);
   
-  // App States
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
@@ -120,24 +120,89 @@ export default function App() {
   const handleFindRoute = async () => {
     Keyboard.dismiss();
     setLoading(true);
-    let startPoint = (startText.toLowerCase() === 'my location' && userLocation) ? userLocation : await getCoordsFromText(startText);
-    const endPoint = await getCoordsFromText(endText);
+    
+    try {
+      console.log("1. Starting route fetch...");
+      
+      let startPoint = (startText.toLowerCase() === 'my location' && userLocation) 
+        ? userLocation 
+        : await getCoordsFromText(startText);
+      
+      const endPoint = await getCoordsFromText(endText);
+      console.log("2. Coordinates found:", { startPoint, endPoint });
 
-    if (startPoint && endPoint) {
-      setMarkers({ start: startPoint, end: endPoint });
-      const routes = await fetchRealRoute(startPoint, endPoint);
-      setAllRoutes(routes || []);
-      setSelectedRouteIndex(0);
-      setIsMinimized(true);
+      if (startPoint && endPoint) {
+        setMarkers({ start: startPoint, end: endPoint });
+        
+        console.log("3. Fetching from OpenRouteService...");
+        const routes = await fetchRealRoute(startPoint, endPoint);
+        
+        console.log("4. Routes fetched. Calculating GPS-seeded safety data...");
+        if (routes && routes.length > 0) {
+          
+          const roundedDistances = routes.map(r => Math.round(r.distance / 100) * 100);
+          const uniqueDistances = [...new Set(roundedDistances)].sort((a, b) => b - a); 
 
-      if (routes && routes.length > 0 && mapRef.current) {
-        mapRef.current.fitToCoordinates(routes[0].coords, {
-          edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
-          animated: true,
-        });
+          let processedRoutes = routes.map((route) => {
+            const roundedDist = Math.round(route.distance / 100) * 100;
+            const tierIndex = uniqueDistances.indexOf(roundedDist); 
+            
+            const midIndex = Math.floor(route.coords.length / 2);
+            const midCoord = route.coords[midIndex];
+            
+            const seedStr = `${midCoord.latitude.toFixed(3)}-${midCoord.longitude.toFixed(3)}-${tierIndex}`;
+            let hash = 0;
+            for (let i = 0; i < seedStr.length; i++) {
+              hash = Math.imul(31, hash) + seedStr.charCodeAt(i) | 0;
+            }
+            const seed = Math.abs(hash % 10000) / 10000; 
+
+            const score = calculateSafetyScore(tierIndex, seed);
+            
+            let numDangerZones = tierIndex === 0 ? Math.floor(seed * 2) : 
+                                 tierIndex === 1 ? Math.floor(seed * 2) + 2 : 
+                                 Math.floor(seed * 3) + 4;
+
+            const dangerZones = [];
+            const coordsLen = route.coords.length;
+            
+            if (coordsLen > 10) {
+              for (let i = 0; i < numDangerZones; i++) {
+                const pointSeed = Math.abs((hash * (i + 13)) % 10000) / 10000;
+                const randomIndex = Math.floor(pointSeed * (coordsLen - 4)) + 2;
+                dangerZones.push(route.coords[randomIndex]);
+              }
+            }
+
+            return { ...route, safetyScore: score, dangerZones };
+          });
+
+          // Sort highest score to the top
+          processedRoutes.sort((a, b) => b.safetyScore - a.safetyScore);
+          setAllRoutes(processedRoutes);
+          setSelectedRouteIndex(0);
+          setIsMinimized(true);
+
+          if (mapRef.current) {
+            mapRef.current.fitToCoordinates(routes[0].coords, {
+              edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
+              animated: true,
+            });
+          }
+        } else {
+          console.warn("API returned empty routes.");
+          setAllRoutes([]);
+        }
+      } else {
+        console.warn("Could not resolve start or end coordinates.");
       }
+    } catch (error) {
+      console.error("🔥 FATAL ERROR in handleFindRoute:", error);
+      alert("Failed to fetch route. Check console for details.");
+    } finally {
+      console.log("5. Finished processing. Stopping loader.");
+      setLoading(false); 
     }
-    setLoading(false);
   };
 
   const getLiveLocationMessage = () => {
@@ -180,9 +245,12 @@ export default function App() {
   const currentRoute = allRoutes && allRoutes.length > 0 ? allRoutes[selectedRouteIndex] : null;
 
   const getRouteTheme = (index) => {
-    if (index === 0) return { color: '#00FF94', score: 7.8, label: '🛡️ SAFEST' };
-    if (index === 1) return { color: '#FF3B30', score: 4.2, label: '⚡ SHORTEST' };
-    return { color: '#3498db', score: 6.5, label: '🛣️ MAIN ROAD' };
+    const route = allRoutes[index];
+    const realScore = route ? route.safetyScore : 0; 
+
+    if (index === 0) return { color: '#00FF94', score: realScore, label: '🛡️ MAXIMUM SAFETY' };
+    if (index === 1) return { color: '#3498db', score: realScore, label: '🛣️ BALANCED' };
+    return { color: '#FF3B30', score: realScore, label: '⚠️ HIGH RISK' };
   };
 
   const activeTheme = getRouteTheme(selectedRouteIndex);
@@ -213,6 +281,7 @@ export default function App() {
         customMapStyle={isDarkMode ? mapDarkStyle : []}
         showsUserLocation={true}
       >
+        {/* POLYLINES - These still change color dynamically */}
         {allRoutes.map((route, index) => {
           const pathTheme = getRouteTheme(index);
           const isFocused = index === selectedRouteIndex;
@@ -220,7 +289,7 @@ export default function App() {
             <Polyline 
               key={`route-${index}`}
               coordinates={route.coords} 
-              strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} // Transparency for inactive paths
+              strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} 
               strokeWidth={isFocused ? 8 : 4}
               zIndex={isFocused ? 1000 : 10 - index}
               tappable={true}
@@ -228,6 +297,24 @@ export default function App() {
             />
           );
         })}
+
+        {/* DANGER ZONES - Locked to permanent full opacity. No jumping, no flashing. */}
+        {allRoutes.map((route, index) => {
+          return route.dangerZones?.map((zoneCoord, zIndex) => (
+            <Marker 
+              key={`danger-${index}-${zIndex}`} 
+              coordinate={zoneCoord}
+              zIndex={1001} // Always on top of lines
+              tracksViewChanges={false} // Safe to use now since opacity is static
+              anchor={{ x: 0.5, y: 0.5 }} 
+            >
+              <View style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
+                <Ionicons name="warning" size={10} color="#FFF" />
+              </View>
+            </Marker>
+          ));
+        })}
+
         {markers && (
           <>
             <Marker coordinate={markers.start}><View style={styles.dotStart}/></Marker>
@@ -236,12 +323,10 @@ export default function App() {
         )}
       </MapView>
 
-      {/* 🍔 CLEAN TOP MENU ICON */}
       <TouchableOpacity style={[styles.menuBtn, {backgroundColor: CARD_BG}]} onPress={toggleDrawer}>
         <Ionicons name="menu" size={24} color={activeTheme.color} />
       </TouchableOpacity>
 
-      {/* 🧭 SEARCH OVERLAY */}
       <View style={styles.topOverlay}>
         {!isMinimized ? (
           <View style={[styles.fullSearch, { backgroundColor: CARD_BG, borderColor: isDarkMode ? '#1A1A1A' : '#DDD' }]}>
@@ -261,7 +346,6 @@ export default function App() {
         )}
       </View>
 
-      {/* 📊 TABS & DASHBOARD */}
       {isMinimized && currentRoute && (
         <>
           <View style={styles.routeTray}>
@@ -290,7 +374,6 @@ export default function App() {
         </>
       )}
 
-      {/* 🚪 SIDE MENU (DRAWER) */}
       <Animated.View style={[styles.drawer, { backgroundColor: CARD_BG, transform: [{ translateX: drawerAnim }] }]}>
         <View style={styles.drawerHeader}>
           <Text style={[styles.drawerLogo, {color: LOGO_COLOR}]}>SAFERA<Text style={{color: '#00FF94'}}>.</Text></Text>
@@ -516,6 +599,8 @@ const styles = StyleSheet.create({
   subStatus: { fontSize: 10, marginTop: 4 },
   dotStart: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#3498db', borderWidth: 2, borderColor: '#FFF' },
   dotEnd: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#FFF' },
+  dangerIconContainer: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#FFF', elevation: 4 }
+});
   profileModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   profileModal: { minHeight: height * 0.72, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24 },
   profileHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },

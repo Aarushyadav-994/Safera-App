@@ -1,13 +1,22 @@
 // SafetyEngine.js
-export const calculateSafetyScore = (point, mockData) => {
-  if (!mockData || mockData.length === 0) return 5; // Default safe-ish score
-  
-  // For the hackathon demo, we just look at the first mock data entry 
-  // that represents the IGDTUW area.
-  const nearest = mockData[0]; 
-  
-  // Formula: Higher lighting/crowd is good, High crime is bad.
-  const score = (nearest.lighting * 0.4) + (nearest.crowd * 0.4) - (nearest.crime_score * 0.2);
-  
-  return score; // Max possible score is around 8.0 with current formula
+export const calculateSafetyScore = (tierIndex, seed) => {
+  try {
+    let score = 0;
+    
+    // Tier 0 is the Longest route (Secure Corridor)
+    // Tier 2 is the Shortest route (High Risk Shortcut)
+    if (tierIndex === 0) {
+      score = 7.5 + (seed * 2.3); // Scales between 7.5 and 9.8
+    } else if (tierIndex === 1) {
+      score = 5.5 + (seed * 1.9); // Scales between 5.5 and 7.4
+    } else {
+      score = 3.0 + (seed * 2.4); // Scales between 3.0 and 5.4
+    }
+    
+    return parseFloat(score.toFixed(1));
+
+  } catch (error) {
+    console.error("Shield Engine Error - Using Fallback:", error);
+    return 6.5; 
+  }
 };

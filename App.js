@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
-  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal
+  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -16,6 +16,7 @@ const { width, height } = Dimensions.get('window');
 export default function App() {
   const mapRef = useRef(null);
   const drawerAnim = useRef(new Animated.Value(-width)).current;
+  const locationWatcherRef = useRef(null);
   
   // App States
   const [user, setUser] = useState(null); 
@@ -31,6 +32,7 @@ export default function App() {
   const [isMinimized, setIsMinimized] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isSosOpen, setIsSosOpen] = useState(false);
   const [profileForm, setProfileForm] = useState({
     profileName: '',
     email: '',
@@ -40,11 +42,29 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      let { status } = await Location.requestForegroundPermissionsAsync();
+      const { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') return;
-      let location = await Location.getCurrentPositionAsync({});
+
+      const location = await Location.getCurrentPositionAsync({});
       setUserLocation(location.coords);
+
+      locationWatcherRef.current = await Location.watchPositionAsync(
+        {
+          accuracy: Location.Accuracy.High,
+          timeInterval: 5000,
+          distanceInterval: 10,
+        },
+        (nextLocation) => {
+          setUserLocation(nextLocation.coords);
+        }
+      );
     })();
+
+    return () => {
+      if (locationWatcherRef.current) {
+        locationWatcherRef.current.remove();
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -118,6 +138,42 @@ export default function App() {
       }
     }
     setLoading(false);
+  };
+
+  const getLiveLocationMessage = () => {
+    if (!userLocation) {
+      return 'Live location is currently unavailable.';
+    }
+
+    return `Live location: https://maps.google.com/?q=${userLocation.latitude},${userLocation.longitude}`;
+  };
+
+  const triggerSos = async (target) => {
+    const isPolice = target === 'police';
+    const phoneNumber = isPolice ? '112' : user?.emergencyContact1;
+
+    if (!phoneNumber) {
+      Alert.alert('SOS unavailable', 'No emergency contact is saved in the profile yet.');
+      return;
+    }
+
+    const targetLabel = isPolice ? 'Police' : 'Emergency Contact';
+    const liveLocationMessage = getLiveLocationMessage();
+    setIsSosOpen(false);
+
+    Alert.alert(
+      'SOS sent',
+      `${targetLabel} notified.\n${liveLocationMessage}\n\nDialing ${phoneNumber}...`
+    );
+
+    const phoneUrl = `tel:${phoneNumber}`;
+    const canCall = await Linking.canOpenURL(phoneUrl);
+
+    if (canCall) {
+      await Linking.openURL(phoneUrl);
+    } else {
+      Alert.alert('Call unavailable', `Could not open the dialer for ${phoneNumber}.`);
+    }
   };
 
   // 🛡️ CRITICAL ERROR FIX: Safety check for empty routes
@@ -277,6 +333,11 @@ export default function App() {
         </View>
       </Animated.View>
 
+      <TouchableOpacity style={styles.sosFab} onPress={() => setIsSosOpen(true)} activeOpacity={0.9}>
+        <Ionicons name="warning" size={24} color="#FFF" />
+        <Text style={styles.sosFabText}>SOS</Text>
+      </TouchableOpacity>
+
       <Modal
         visible={isProfileOpen}
         animationType="slide"
@@ -331,6 +392,48 @@ export default function App() {
 
             <TouchableOpacity style={[styles.profileSaveBtn, { backgroundColor: activeTheme.color }]} onPress={handleSaveProfile}>
               <Text style={styles.profileSaveText}>Save Profile</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isSosOpen}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setIsSosOpen(false)}
+      >
+        <View style={styles.sosBackdrop}>
+          <View style={[styles.sosModal, { backgroundColor: CARD_BG }]}>
+            <Text style={[styles.sosTitle, { color: UI_TEXT }]}>Trigger SOS</Text>
+            <Text style={styles.sosSubtitle}>
+              This simulates sending your live location and opening the call screen immediately.
+            </Text>
+
+            <TouchableOpacity style={styles.sosOption} onPress={() => triggerSos('police')}>
+              <View style={[styles.sosIconWrap, { backgroundColor: '#2A1010' }]}>
+                <Ionicons name="shield" size={22} color="#FF5A5F" />
+              </View>
+              <View style={styles.sosOptionText}>
+                <Text style={[styles.sosOptionTitle, { color: UI_TEXT }]}>Police</Text>
+                <Text style={styles.sosOptionSub}>Share live location and dial emergency services.</Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.sosOption} onPress={() => triggerSos('contact')}>
+              <View style={[styles.sosIconWrap, { backgroundColor: '#10261E' }]}>
+                <Ionicons name="call" size={22} color="#00FF94" />
+              </View>
+              <View style={styles.sosOptionText}>
+                <Text style={[styles.sosOptionTitle, { color: UI_TEXT }]}>Emergency Contact</Text>
+                <Text style={styles.sosOptionSub}>
+                  Send live location to {user.emergencyContact1 || 'your saved contact'} and dial them.
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.sosCancelBtn} onPress={() => setIsSosOpen(false)}>
+              <Text style={styles.sosCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -423,5 +526,48 @@ const styles = StyleSheet.create({
   profileInput: { backgroundColor: '#111', borderWidth: 1, borderColor: '#222', borderRadius: 16, paddingHorizontal: 18, height: 56, fontSize: 15 },
   profileInputDisabled: { opacity: 0.65 },
   profileSaveBtn: { height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
-  profileSaveText: { color: '#000', fontWeight: '900', fontSize: 15 }
+  profileSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
+  sosFab: {
+    position: 'absolute',
+    right: 22,
+    bottom: 34,
+    width: 82,
+    height: 82,
+    borderRadius: 41,
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 950,
+    elevation: 16,
+    shadowColor: '#FF3B30',
+    shadowOpacity: 0.35,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+  },
+  sosFabText: { color: '#FFF', fontWeight: '900', fontSize: 13, marginTop: 4, letterSpacing: 1 },
+  sosBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end', padding: 20 },
+  sosModal: { borderRadius: 28, padding: 22, marginBottom: 8 },
+  sosTitle: { fontSize: 28, fontWeight: '900' },
+  sosSubtitle: { color: '#777', marginTop: 8, marginBottom: 22, lineHeight: 20 },
+  sosOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 20,
+    padding: 16,
+    marginBottom: 14,
+  },
+  sosIconWrap: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  sosOptionText: { flex: 1 },
+  sosOptionTitle: { fontSize: 17, fontWeight: '900' },
+  sosOptionSub: { color: '#888', fontSize: 12, marginTop: 4, lineHeight: 18 },
+  sosCancelBtn: { alignItems: 'center', justifyContent: 'center', paddingTop: 6, paddingBottom: 8 },
+  sosCancelText: { color: '#888', fontSize: 15, fontWeight: '700' }
 });

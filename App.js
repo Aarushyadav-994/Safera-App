@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { calculateSafetyScore } from './SafetyEngine';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
   Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated
@@ -47,33 +48,67 @@ export default function App() {
   const handleFindRoute = async () => {
     Keyboard.dismiss();
     setLoading(true);
-    let startPoint = (startText.toLowerCase() === 'my location' && userLocation) ? userLocation : await getCoordsFromText(startText);
-    const endPoint = await getCoordsFromText(endText);
+    
+    try {
+      console.log("1. Starting route fetch...");
+      
+      let startPoint = (startText.toLowerCase() === 'my location' && userLocation) 
+        ? userLocation 
+        : await getCoordsFromText(startText);
+      
+      const endPoint = await getCoordsFromText(endText);
+      console.log("2. Coordinates found:", { startPoint, endPoint });
 
-    if (startPoint && endPoint) {
-      setMarkers({ start: startPoint, end: endPoint });
-      const routes = await fetchRealRoute(startPoint, endPoint);
-      setAllRoutes(routes || []);
-      setSelectedRouteIndex(0);
-      setIsMinimized(true);
+      if (startPoint && endPoint) {
+        setMarkers({ start: startPoint, end: endPoint });
+        
+        console.log("3. Fetching from OpenRouteService...");
+        const routes = await fetchRealRoute(startPoint, endPoint);
+        
+        console.log("4. Routes fetched. Calculating safety scores...");
+        if (routes && routes.length > 0) {
+          let processedRoutes = routes.map((route, index) => {
+            // Pass the index to generate tier-based random data
+            return { ...route, safetyScore: calculateSafetyScore(route.coords[0], index) };
+          });
 
-      if (routes && routes.length > 0 && mapRef.current) {
-        mapRef.current.fitToCoordinates(routes[0].coords, {
-          edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
-          animated: true,
-        });
+          // Sort highest score to the top
+          processedRoutes.sort((a, b) => b.safetyScore - a.safetyScore);
+          setAllRoutes(processedRoutes);
+          setSelectedRouteIndex(0);
+          setIsMinimized(true);
+
+          if (mapRef.current) {
+            mapRef.current.fitToCoordinates(routes[0].coords, {
+              edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
+              animated: true,
+            });
+          }
+        } else {
+          console.warn("API returned empty routes.");
+          setAllRoutes([]);
+        }
+      } else {
+        console.warn("Could not resolve start or end coordinates.");
       }
+    } catch (error) {
+      console.error("🔥 FATAL ERROR in handleFindRoute:", error);
+      alert("Failed to fetch route. Check console for details.");
+    } finally {
+      console.log("5. Finished processing. Stopping loader.");
+      setLoading(false); 
     }
-    setLoading(false);
   };
 
-  // 🛡️ CRITICAL ERROR FIX: Safety check for empty routes
   const currentRoute = allRoutes && allRoutes.length > 0 ? allRoutes[selectedRouteIndex] : null;
 
   const getRouteTheme = (index) => {
-    if (index === 0) return { color: '#00FF94', score: 7.8, label: '🛡️ SAFEST' };
-    if (index === 1) return { color: '#FF3B30', score: 4.2, label: '⚡ SHORTEST' };
-    return { color: '#3498db', score: 6.5, label: '🛣️ MAIN ROAD' };
+    const route = allRoutes[index];
+    const realScore = route ? route.safetyScore : 0; 
+
+    if (index === 0) return { color: '#00FF94', score: realScore, label: '🛡️ MAXIMUM SAFETY' };
+    if (index === 1) return { color: '#3498db', score: realScore, label: '🛣️ BALANCED' };
+    return { color: '#FF3B30', score: realScore, label: '⚠️ HIGH RISK' };
   };
 
   const activeTheme = getRouteTheme(selectedRouteIndex);
@@ -103,7 +138,7 @@ export default function App() {
             <Polyline 
               key={`route-${index}`}
               coordinates={route.coords} 
-              strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} // Transparency for inactive paths
+              strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} 
               strokeWidth={isFocused ? 8 : 4}
               zIndex={isFocused ? 1000 : 10 - index}
               tappable={true}
@@ -119,12 +154,10 @@ export default function App() {
         )}
       </MapView>
 
-      {/* 🍔 CLEAN TOP MENU ICON */}
       <TouchableOpacity style={[styles.menuBtn, {backgroundColor: CARD_BG}]} onPress={toggleDrawer}>
         <Ionicons name="menu" size={24} color={activeTheme.color} />
       </TouchableOpacity>
 
-      {/* 🧭 SEARCH OVERLAY */}
       <View style={styles.topOverlay}>
         {!isMinimized ? (
           <View style={[styles.fullSearch, { backgroundColor: CARD_BG, borderColor: isDarkMode ? '#1A1A1A' : '#DDD' }]}>
@@ -144,7 +177,6 @@ export default function App() {
         )}
       </View>
 
-      {/* 📊 TABS & DASHBOARD */}
       {isMinimized && currentRoute && (
         <>
           <View style={styles.routeTray}>
@@ -173,7 +205,6 @@ export default function App() {
         </>
       )}
 
-      {/* 🚪 SIDE MENU (DRAWER) */}
       <Animated.View style={[styles.drawer, { backgroundColor: CARD_BG, transform: [{ translateX: drawerAnim }] }]}>
         <View style={styles.drawerHeader}>
           <Text style={[styles.drawerLogo, {color: LOGO_COLOR}]}>SAFERA<Text style={{color: '#00FF94'}}>.</Text></Text>

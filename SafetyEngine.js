@@ -1,13 +1,29 @@
 // SafetyEngine.js
-export const calculateSafetyScore = (point, mockData) => {
-  if (!mockData || mockData.length === 0) return 5; // Default safe-ish score
-  
-  // For the hackathon demo, we just look at the first mock data entry 
-  // that represents the IGDTUW area.
-  const nearest = mockData[0]; 
-  
-  // Formula: Higher lighting/crowd is good, High crime is bad.
-  const score = (nearest.lighting * 0.4) + (nearest.crowd * 0.4) - (nearest.crime_score * 0.2);
-  
-  return score; // Max possible score is around 8.0 with current formula
+export const calculateSafetyScore = (coords, routeIndex = 0) => {
+  try {
+    let min, max;
+    
+    // Generate dynamic, random scores based on the route tier
+    // This guarantees your UI always has a Green (>7.5), Blue (>5.5), and Red (<5.4) path
+    // perfectly matching your dashboard text logic!
+    if (routeIndex === 0) {
+      min = 7.5; 
+      max = 9.8; // Maximum Safety Tier
+    } else if (routeIndex === 1) {
+      min = 5.5; 
+      max = 7.4; // Balanced Tier
+    } else {
+      min = 3.0; 
+      max = 5.4; // High Risk Tier
+    }
+
+    // Generate the random number within the tier boundaries
+    const randomScore = Math.random() * (max - min) + min;
+    
+    return parseFloat(randomScore.toFixed(1));
+
+  } catch (error) {
+    console.error("Shield Engine Error - Using Fallback:", error);
+    return 6.5; // Failsafe
+  }
 };

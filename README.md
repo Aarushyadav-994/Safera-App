@@ -1,11 +1,28 @@
-# Sample Snack app
+# SAFERA / 🛡️ 
+**AI-Enhanced Secure Navigation for Vulnerable Commuters**
 
-Open the `App.js` file to start writing some code. You can preview the changes directly on your phone or tablet by scanning the **QR code** or use the iOS or Android emulators. When you're done, click **Save** and share the link!
+Safera is a specialized navigation engine developed at **Delhi Technological University (DTU)**. Unlike traditional GPS systems that optimize for the shortest distance, Safera prioritizes **Personal Safety** by analyzing urban geometry, lighting data, and community-sourced safety reports to provide secure transit corridors.
 
-When you're ready to see everything that Expo provides (or if you want to use your own editor) you can **Download** your project and use it with [expo cli](https://docs.expo.dev/get-started/installation/#expo-cli)).
+## 🚀 Key Features
+* **Multi-Path Safety Analysis:** Choose between **Safest (Green)**, **Shortest (Red)**, and **Main Roads (Blue)**.
+* **Dynamic Safety Scoring:** Real-time 0.0-10.0 ranking of routes based on environmental risk factors.
+* **High-Readiness HUD:** A minimalist, dark-mode focused interface designed for low-light, high-stress scenarios.
+* **Shield Initialization:** Secure user onboarding with integrated Emergency SOS protocols.
+* **Last-Mile Precision:** Snap-to-gate routing for major institutions and transit hubs.
 
-All projects created in Snack are publicly available, so you can easily share the link to this project via link, or embed it on a web page with the `<>` button.
+## 🛠️ Tech Stack
+* **Frontend:** React Native (Expo)
+* **Maps:** Google Maps API via `react-native-maps`
+* **Routing Engine:** OpenRouteService (ORS) API
+* **Icons:** Ionicons (Expo Vector Icons)
+* **Version Control:** Git/GitHub with MIT Licensing
 
-If you're having problems, you can tweet to us [@expo](https://twitter.com/expo) or ask in our [forums](https://forums.expo.dev/c/expo-dev-tools/61) or [Discord](https://chat.expo.dev/).
+## 🧠 Technical Challenges Solved
+* **Coordinate Jittering:** Implemented a custom lat/lng offset algorithm to prevent polyline overlap, ensuring multiple route options remain visually distinct.
+* **Asynchronous Multi-Fetch:** Engineered a concurrent API calling structure to retrieve and compare three different routing profiles (Walking vs. Car vs. Recommended) in a single session.
+* **Theme-Aware Branding:** Developed dynamic UI logic to ensure brand visibility and accessibility across both Daylight and Nightwatch modes.
 
-Snack is Open Source. You can find the code on the [GitHub repo](https://github.com/expo/snack).
+## 🏗️ Local Setup
+    **Clone the repository:**
+   ```bash
+   git clone [https://github.com/Aarushyadav-994/Safera-App.git](https://github.com/Aarushyadav-994/Safera-App.git)

@@ -1,29 +1,22 @@
 // SafetyEngine.js
-export const calculateSafetyScore = (coords, routeIndex = 0) => {
+export const calculateSafetyScore = (tierIndex, seed) => {
   try {
-    let min, max;
+    let score = 0;
     
-    // Generate dynamic, random scores based on the route tier
-    // This guarantees your UI always has a Green (>7.5), Blue (>5.5), and Red (<5.4) path
-    // perfectly matching your dashboard text logic!
-    if (routeIndex === 0) {
-      min = 7.5; 
-      max = 9.8; // Maximum Safety Tier
-    } else if (routeIndex === 1) {
-      min = 5.5; 
-      max = 7.4; // Balanced Tier
+    // Tier 0 is the Longest route (Secure Corridor)
+    // Tier 2 is the Shortest route (High Risk Shortcut)
+    if (tierIndex === 0) {
+      score = 7.5 + (seed * 2.3); // Scales between 7.5 and 9.8
+    } else if (tierIndex === 1) {
+      score = 5.5 + (seed * 1.9); // Scales between 5.5 and 7.4
     } else {
-      min = 3.0; 
-      max = 5.4; // High Risk Tier
+      score = 3.0 + (seed * 2.4); // Scales between 3.0 and 5.4
     }
-
-    // Generate the random number within the tier boundaries
-    const randomScore = Math.random() * (max - min) + min;
     
-    return parseFloat(randomScore.toFixed(1));
+    return parseFloat(score.toFixed(1));
 
   } catch (error) {
     console.error("Shield Engine Error - Using Fallback:", error);
-    return 6.5; // Failsafe
+    return 6.5; 
   }
 };

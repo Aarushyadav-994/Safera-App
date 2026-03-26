@@ -17,7 +17,6 @@ export default function App() {
   const mapRef = useRef(null);
   const drawerAnim = useRef(new Animated.Value(-width)).current;
   
-  // App States
   const [user, setUser] = useState(null); 
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -65,11 +64,44 @@ export default function App() {
         console.log("3. Fetching from OpenRouteService...");
         const routes = await fetchRealRoute(startPoint, endPoint);
         
-        console.log("4. Routes fetched. Calculating safety scores...");
+        console.log("4. Routes fetched. Calculating GPS-seeded safety data...");
         if (routes && routes.length > 0) {
-          let processedRoutes = routes.map((route, index) => {
-            // Pass the index to generate tier-based random data
-            return { ...route, safetyScore: calculateSafetyScore(route.coords[0], index) };
+          
+          const roundedDistances = routes.map(r => Math.round(r.distance / 100) * 100);
+          const uniqueDistances = [...new Set(roundedDistances)].sort((a, b) => b - a); 
+
+          let processedRoutes = routes.map((route) => {
+            const roundedDist = Math.round(route.distance / 100) * 100;
+            const tierIndex = uniqueDistances.indexOf(roundedDist); 
+            
+            const midIndex = Math.floor(route.coords.length / 2);
+            const midCoord = route.coords[midIndex];
+            
+            const seedStr = `${midCoord.latitude.toFixed(3)}-${midCoord.longitude.toFixed(3)}-${tierIndex}`;
+            let hash = 0;
+            for (let i = 0; i < seedStr.length; i++) {
+              hash = Math.imul(31, hash) + seedStr.charCodeAt(i) | 0;
+            }
+            const seed = Math.abs(hash % 10000) / 10000; 
+
+            const score = calculateSafetyScore(tierIndex, seed);
+            
+            let numDangerZones = tierIndex === 0 ? Math.floor(seed * 2) : 
+                                 tierIndex === 1 ? Math.floor(seed * 2) + 2 : 
+                                 Math.floor(seed * 3) + 4;
+
+            const dangerZones = [];
+            const coordsLen = route.coords.length;
+            
+            if (coordsLen > 10) {
+              for (let i = 0; i < numDangerZones; i++) {
+                const pointSeed = Math.abs((hash * (i + 13)) % 10000) / 10000;
+                const randomIndex = Math.floor(pointSeed * (coordsLen - 4)) + 2;
+                dangerZones.push(route.coords[randomIndex]);
+              }
+            }
+
+            return { ...route, safetyScore: score, dangerZones };
           });
 
           // Sort highest score to the top
@@ -131,6 +163,7 @@ export default function App() {
         customMapStyle={isDarkMode ? mapDarkStyle : []}
         showsUserLocation={true}
       >
+        {/* POLYLINES - These still change color dynamically */}
         {allRoutes.map((route, index) => {
           const pathTheme = getRouteTheme(index);
           const isFocused = index === selectedRouteIndex;
@@ -146,6 +179,24 @@ export default function App() {
             />
           );
         })}
+
+        {/* DANGER ZONES - Locked to permanent full opacity. No jumping, no flashing. */}
+        {allRoutes.map((route, index) => {
+          return route.dangerZones?.map((zoneCoord, zIndex) => (
+            <Marker 
+              key={`danger-${index}-${zIndex}`} 
+              coordinate={zoneCoord}
+              zIndex={1001} // Always on top of lines
+              tracksViewChanges={false} // Safe to use now since opacity is static
+              anchor={{ x: 0.5, y: 0.5 }} 
+            >
+              <View style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
+                <Ionicons name="warning" size={10} color="#FFF" />
+              </View>
+            </Marker>
+          ));
+        })}
+
         {markers && (
           <>
             <Marker coordinate={markers.start}><View style={styles.dotStart}/></Marker>
@@ -289,5 +340,6 @@ const styles = StyleSheet.create({
   status: { fontSize: 16, fontWeight: '900' },
   subStatus: { fontSize: 10, marginTop: 4 },
   dotStart: { width: 12, height: 12, borderRadius: 6, backgroundColor: '#3498db', borderWidth: 2, borderColor: '#FFF' },
-  dotEnd: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#FFF' }
+  dotEnd: { width: 12, height: 12, borderRadius: 6, borderWidth: 2, borderColor: '#FFF' },
+  dangerIconContainer: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#FFF', elevation: 4 }
 });

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { calculateSafetyScore } from './SafetyEngine';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
-  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert
+  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert, Platform
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -15,7 +15,12 @@ import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports
 
 import * as SMS from 'expo-sms';
 import * as TaskManager from 'expo-task-manager';
+import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const debuggerHost = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost;
+const hostIp = debuggerHost ? debuggerHost.split(':')[0] : '192.168.1.15';
+const BACKEND_URL = Platform.OS === 'android' && !debuggerHost ? 'http://10.0.2.2:3000' : `http://${hostIp}:3000`;
 
 const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 
@@ -32,7 +37,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       const routeStart = await AsyncStorage.getItem('sos_route_start');
       const routeEnd = await AsyncStorage.getItem('sos_route_end');
       if (emergencyId) {
-        await fetch('http://192.168.1.15:3000/update-location', {
+        await fetch('${BACKEND_URL}/update-location', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -222,7 +227,7 @@ export default function App() {
             if (emergencyId) {
               const routeStart = await AsyncStorage.getItem('sos_route_start');
               const routeEnd = await AsyncStorage.getItem('sos_route_end');
-              await fetch('http://192.168.1.15:3000/update-location', {
+              await fetch('${BACKEND_URL}/update-location', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -526,7 +531,7 @@ export default function App() {
 
     // IMMEDIATELY PING SERVER ONCE (Crucial for stationary testing)
     if (userLocation) {
-      fetch('http://192.168.1.15:3000/update-location', {
+      fetch('${BACKEND_URL}/update-location', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -561,7 +566,7 @@ export default function App() {
     }
 
     // 3. Draft the SMS
-    const trackingLink = `http://192.168.1.15:3000/live/${emergencyId}`;
+    const trackingLink = `${BACKEND_URL}/live/${emergencyId}`;
     const smsMessage = `SOS! I am in a critical situation.\n\nTrack my live location here:\n${trackingLink}`;
 
     console.log(`\n=================================\n👉 LIVE TRACKING LINK: ${trackingLink}\n=================================\n`);
@@ -760,7 +765,7 @@ export default function App() {
         if (emergencyId) {
           const routeStart = await AsyncStorage.getItem('sos_route_start');
           const routeEnd = await AsyncStorage.getItem('sos_route_end');
-          await fetch('http://192.168.1.15:3000/update-location', {
+          await fetch('${BACKEND_URL}/update-location', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

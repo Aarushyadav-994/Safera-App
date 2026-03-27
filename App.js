@@ -126,6 +126,7 @@ export default function App() {
   const notifiedDangerZonesRef = useRef(new Set());
   const notifiedLowLightingZonesRef = useRef(new Set());
   const notifiedIsolatedZonesRef = useRef(new Set());
+  const isSimulatingRef = useRef(false);
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -182,7 +183,9 @@ export default function App() {
           distanceInterval: 10,
         },
         (nextLocation) => {
-          setUserLocation(nextLocation.coords);
+          if (!isSimulatingRef.current) {
+            setUserLocation(nextLocation.coords);
+          }
         }
       );
     })();
@@ -267,7 +270,13 @@ export default function App() {
 
         if (nextRoute) {
           const originalRoute = allRoutes[selectedRouteIndex];
-          nextRoute.dangerZones = originalRoute?.dangerZones || [];
+          
+          const snapToPolyline = (zones, polylineCoords) => 
+            (zones || []).map(z => getClosestPointOnRoute(polylineCoords, z) || z);
+
+          nextRoute.dangerZones = snapToPolyline(originalRoute?.dangerZones, nextRoute.coords);
+          nextRoute.lowLightingZones = snapToPolyline(originalRoute?.lowLightingZones, nextRoute.coords);
+          nextRoute.isolatedZones = snapToPolyline(originalRoute?.isolatedZones, nextRoute.coords);
           nextRoute.safetyScore = originalRoute?.safetyScore || 0;
           setNavigationRoute(nextRoute);
           lastNavigationRefreshLocationRef.current = userLocation;
@@ -658,6 +667,8 @@ export default function App() {
     if (!__DEV__ || !navigationRoute?.coords?.length || !userLocation) {
       return;
     }
+
+    isSimulatingRef.current = true;
 
     const closestIndex = getClosestCoordIndex(navigationRoute.coords, userLocation);
     const lastIndex = navigationRoute.coords.length - 1;
@@ -1091,69 +1102,67 @@ export default function App() {
         </View>
       )}
 
-      {isNavigating && showUnsafeZoneCard && (
-        <View style={styles.postTripContainer}>
-          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#FF3B30' }]}>
-            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-              <Ionicons name="warning" size={20} color="#FF3B30"/>
-              <Text style={[styles.postTripTitle, { color: '#FF3B30', marginLeft: 8, marginBottom: 0 }]}>UNSAFE ZONE AHEAD</Text>
+      {isNavigating && (showUnsafeZoneCard || showLowLightingCard || showIsolatedCard) && (
+        <View style={[styles.postTripContainer, { flexDirection: 'column', gap: 10 }]}>
+          {showUnsafeZoneCard && (
+            <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#FF3B30' }]}>
+              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+                <Ionicons name="warning" size={20} color="#FF3B30"/>
+                <Text style={[styles.postTripTitle, { color: '#FF3B30', marginLeft: 8, marginBottom: 0 }]}>UNSAFE ZONE AHEAD</Text>
+              </View>
+              <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
+                You are within 200m of a flagged high-risk area. Please stay alert to your surroundings.
+              </Text>
+              <View style={styles.postTripActions}>
+                <TouchableOpacity
+                  style={[styles.postTripPrimaryBtn, { backgroundColor: '#FF3B30', flex: 1 }]}
+                  onPress={() => setShowUnsafeZoneCard(false)}
+                >
+                  <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
-              You are within 200m of a flagged high-risk area. Please stay alert to your surroundings.
-            </Text>
-            <View style={styles.postTripActions}>
-              <TouchableOpacity
-                style={[styles.postTripPrimaryBtn, { backgroundColor: '#FF3B30', flex: 1 }]}
-                onPress={() => setShowUnsafeZoneCard(false)}
-              >
-                <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+          )}
 
-      {isNavigating && showLowLightingCard && (
-        <View style={styles.postTripContainer}>
-          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#FFC107' }]}>
-            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-              <Ionicons name="flashlight" size={20} color="#FFC107"/>
-              <Text style={[styles.postTripTitle, { color: '#FFC107', marginLeft: 8, marginBottom: 0 }]}>LOW LIGHTING AHEAD</Text>
+          {showLowLightingCard && (
+            <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#FFC107' }]}>
+              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+                <Ionicons name="flashlight" size={20} color="#FFC107"/>
+                <Text style={[styles.postTripTitle, { color: '#FFC107', marginLeft: 8, marginBottom: 0 }]}>LOW LIGHTING AHEAD</Text>
+              </View>
+              <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
+                You are approaching an area with historically poor street lighting. Stay vigilant.
+              </Text>
+              <View style={styles.postTripActions}>
+                <TouchableOpacity
+                  style={[styles.postTripPrimaryBtn, { backgroundColor: '#FFC107', flex: 1 }]}
+                  onPress={() => setShowLowLightingCard(false)}
+                >
+                  <Text style={[styles.postTripPrimaryText, { color: '#000' }]}>Acknowledged</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
-              You are approaching an area with historically poor street lighting. Stay vigilant.
-            </Text>
-            <View style={styles.postTripActions}>
-              <TouchableOpacity
-                style={[styles.postTripPrimaryBtn, { backgroundColor: '#FFC107', flex: 1 }]}
-                onPress={() => setShowLowLightingCard(false)}
-              >
-                <Text style={[styles.postTripPrimaryText, { color: '#000' }]}>Acknowledged</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
+          )}
 
-      {isNavigating && showIsolatedCard && (
-        <View style={styles.postTripContainer}>
-          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#5E5CE6' }]}>
-            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
-              <Ionicons name="eye-off" size={20} color="#5E5CE6"/>
-              <Text style={[styles.postTripTitle, { color: '#5E5CE6', marginLeft: 8, marginBottom: 0 }]}>ISOLATED STRETCH AHEAD</Text>
+          {showIsolatedCard && (
+            <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#5E5CE6' }]}>
+              <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+                <Ionicons name="eye-off" size={20} color="#5E5CE6"/>
+                <Text style={[styles.postTripTitle, { color: '#5E5CE6', marginLeft: 8, marginBottom: 0 }]}>ISOLATED STRETCH AHEAD</Text>
+              </View>
+              <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
+                You are approaching a deserted or sparsely populated stretch. Keep your guards up.
+              </Text>
+              <View style={styles.postTripActions}>
+                <TouchableOpacity
+                  style={[styles.postTripPrimaryBtn, { backgroundColor: '#5E5CE6', flex: 1 }]}
+                  onPress={() => setShowIsolatedCard(false)}
+                >
+                  <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
-              You are approaching a deserted or sparsely populated stretch. Keep your guards up.
-            </Text>
-            <View style={styles.postTripActions}>
-              <TouchableOpacity
-                style={[styles.postTripPrimaryBtn, { backgroundColor: '#5E5CE6', flex: 1 }]}
-                onPress={() => setShowIsolatedCard(false)}
-              >
-                <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          )}
         </View>
       )}
 

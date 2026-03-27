@@ -1064,11 +1064,11 @@ export default function App() {
       <Modal
         visible={isMyReportsOpen}
         animationType="slide"
-        transparent
+        transparent={false}
         onRequestClose={() => setIsMyReportsOpen(false)}
       >
-        <View style={styles.profileModalBackdrop}>
-          <View style={[styles.profileModal, { backgroundColor: CARD_BG }]}>
+        <View style={[styles.fullScreenModalPage, { backgroundColor: CARD_BG }]}>
+          <View style={[styles.fullScreenModalBody, { backgroundColor: CARD_BG }]}>
             <View style={styles.profileHeader}>
               <View>
                 <Text style={[styles.profileTitle, { color: UI_TEXT }]}>My Reports</Text>
@@ -1175,11 +1175,11 @@ export default function App() {
       <Modal
         visible={isReportsOpen}
         animationType="slide"
-        transparent
+        transparent={false}
         onRequestClose={() => setIsReportsOpen(false)}
       >
-        <View style={styles.profileModalBackdrop}>
-          <View style={[styles.profileModal, { backgroundColor: CARD_BG }]}>
+        <View style={[styles.fullScreenModalPage, { backgroundColor: CARD_BG }]}>
+          <View style={[styles.fullScreenModalBody, { backgroundColor: CARD_BG }]}>
             <View style={styles.profileHeader}>
               <View>
                 <Text style={[styles.profileTitle, { color: UI_TEXT }]}>Route Reports</Text>
@@ -1618,6 +1618,8 @@ const styles = StyleSheet.create({
   dangerIconContainer: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#FFF', elevation: 4 },
   profileModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   profileModal: { minHeight: height * 0.72, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24 },
+  fullScreenModalPage: { flex: 1, paddingTop: 52 },
+  fullScreenModalBody: { flex: 1, paddingHorizontal: 24, paddingBottom: 24 },
   profileHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
   profileTitle: { fontSize: 28, fontWeight: '900' },
   profileSubtitle: { color: '#777', marginTop: 4, maxWidth: width * 0.65 },

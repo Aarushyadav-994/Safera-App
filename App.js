@@ -864,10 +864,10 @@ export default function App() {
                   key={`danger-${index}-${zIndex}`} 
                   coordinate={zoneCoord}
                   zIndex={1001}
-                  tracksViewChanges={false}
+                  tracksViewChanges
                   anchor={{ x: 0.5, y: 0.5 }} 
                 >
-                  <View style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
+                  <View collapsable={false} style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
                     <Ionicons name="warning" size={10} color="#FFF" />
                   </View>
                 </Marker>

@@ -9,15 +9,120 @@ import * as Location from 'expo-location';
 import { Ionicons } from '@expo/vector-icons';
 
 import AuthScreen from './AuthScreen';
-import { fetchRealRoute, getCoordsFromText } from './RouteService';
+import { fetchRealRoute, fetchRouteForProfile, getCoordsFromText } from './RouteService';
 import { getActiveUser, logoutUser, updateActiveUserProfile } from './userDatabase';
+import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports, saveCompletedTrip, saveTripReport } from './tripReports';
 
 const { width, height } = Dimensions.get('window');
+const NAVIGATION_REROUTE_DISTANCE_METERS = 20;
+const ARRIVAL_THRESHOLD_METERS = 30;
+
+const getDistanceMeters = (pointA, pointB) => {
+  if (!pointA || !pointB) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const toRadians = (value) => value * Math.PI / 180;
+  const earthRadius = 6371000;
+  const deltaLat = toRadians(pointB.latitude - pointA.latitude);
+  const deltaLon = toRadians(pointB.longitude - pointA.longitude);
+  const lat1 = toRadians(pointA.latitude);
+  const lat2 = toRadians(pointB.latitude);
+
+  const a =
+    Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
+    Math.cos(lat1) * Math.cos(lat2) *
+    Math.sin(deltaLon / 2) * Math.sin(deltaLon / 2);
+
+  return earthRadius * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+};
+
+const getClosestCoordIndex = (coords, point) => {
+  if (!coords?.length || !point) {
+    return -1;
+  }
+
+  let closestIndex = 0;
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  coords.forEach((coord, index) => {
+    const distance = getDistanceMeters(coord, point);
+
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestIndex = index;
+    }
+  });
+
+  return closestIndex;
+};
+
+const getClosestPointOnRoute = (coords, point) => {
+  if (!coords?.length || !point) {
+    return null;
+  }
+
+  if (coords.length === 1) {
+    return coords[0];
+  }
+
+  const projectPointToSegment = (segmentStart, segmentEnd, targetPoint) => {
+    const avgLatitude = (segmentStart.latitude + segmentEnd.latitude + targetPoint.latitude) / 3;
+    const latScale = 111320;
+    const lonScale = 111320 * Math.cos(avgLatitude * Math.PI / 180);
+
+    const ax = segmentStart.longitude * lonScale;
+    const ay = segmentStart.latitude * latScale;
+    const bx = segmentEnd.longitude * lonScale;
+    const by = segmentEnd.latitude * latScale;
+    const px = targetPoint.longitude * lonScale;
+    const py = targetPoint.latitude * latScale;
+
+    const abx = bx - ax;
+    const aby = by - ay;
+    const abLengthSquared = abx * abx + aby * aby;
+
+    if (abLengthSquared === 0) {
+      return {
+        latitude: segmentStart.latitude,
+        longitude: segmentStart.longitude,
+      };
+    }
+
+    const apx = px - ax;
+    const apy = py - ay;
+    const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / abLengthSquared));
+
+    return {
+      latitude: segmentStart.latitude + (segmentEnd.latitude - segmentStart.latitude) * t,
+      longitude: segmentStart.longitude + (segmentEnd.longitude - segmentStart.longitude) * t,
+    };
+  };
+
+  let closestPoint = coords[0];
+  let closestDistance = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < coords.length - 1; index += 1) {
+    const projectedPoint = projectPointToSegment(coords[index], coords[index + 1], point);
+    const distance = getDistanceMeters(projectedPoint, point);
+
+    if (distance < closestDistance) {
+      closestDistance = distance;
+      closestPoint = projectedPoint;
+    }
+  }
+
+  return closestPoint;
+};
 
 export default function App() {
   const mapRef = useRef(null);
+  const reportMapRef = useRef(null);
   const drawerAnim = useRef(new Animated.Value(-width)).current;
   const locationWatcherRef = useRef(null);
+  const lastNavigationRefreshLocationRef = useRef(null);
+  const navigationFetchInFlightRef = useRef(false);
+  const navigationCompletionHandledRef = useRef(false);
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -31,8 +136,24 @@ export default function App() {
   const [markers, setMarkers] = useState(null);
   const [isMinimized, setIsMinimized] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [navigationRoute, setNavigationRoute] = useState(null);
+  const [navigationLoading, setNavigationLoading] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isSosOpen, setIsSosOpen] = useState(false);
+  const [isReportsOpen, setIsReportsOpen] = useState(false);
+  const [isMyReportsOpen, setIsMyReportsOpen] = useState(false);
+  const [completedTrips, setCompletedTrips] = useState([]);
+  const [submittedReports, setSubmittedReports] = useState([]);
+  const [selectedTripForReportId, setSelectedTripForReportId] = useState(null);
+  const [reportType, setReportType] = useState('Unsafe spot');
+  const [reportNote, setReportNote] = useState('');
+  const [arrivalMessage, setArrivalMessage] = useState('');
+  const [showPostTripCard, setShowPostTripCard] = useState(false);
+  const [reportPin, setReportPin] = useState(null);
+  const [editingReportId, setEditingReportId] = useState(null);
+  const [editReportType, setEditReportType] = useState('Unsafe spot');
+  const [editReportNote, setEditReportNote] = useState('');
   const [profileForm, setProfileForm] = useState({
     profileName: '',
     email: '',
@@ -75,10 +196,105 @@ export default function App() {
     })();
   }, []);
 
+  useEffect(() => {
+    if (!isNavigating || !userLocation) {
+      return;
+    }
+
+    mapRef.current?.animateCamera(
+      {
+        center: {
+          latitude: userLocation.latitude,
+          longitude: userLocation.longitude,
+        },
+        zoom: 17,
+        pitch: 50,
+      },
+      { duration: 800 }
+    );
+  }, [isNavigating, userLocation]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setCompletedTrips([]);
+      setSubmittedReports([]);
+      setSelectedTripForReportId(null);
+      return;
+    }
+
+    (async () => {
+      const [savedTrips, savedReports] = await Promise.all([
+        getCompletedTrips(user.id),
+        getTripReports(user.id),
+      ]);
+
+      setCompletedTrips(savedTrips);
+      setSubmittedReports(savedReports);
+      setArrivalMessage('');
+      setShowPostTripCard(false);
+      setSelectedTripForReportId(savedTrips[0]?.id || null);
+    })();
+  }, [user]);
+
+  useEffect(() => {
+    if (!isNavigating || !markers?.end || !userLocation) {
+      return;
+    }
+
+    const distanceFromLastRefresh = getDistanceMeters(
+      lastNavigationRefreshLocationRef.current,
+      userLocation
+    );
+
+    if (
+      navigationFetchInFlightRef.current ||
+      distanceFromLastRefresh < NAVIGATION_REROUTE_DISTANCE_METERS
+    ) {
+      return;
+    }
+
+    navigationFetchInFlightRef.current = true;
+
+    const refreshNavigationRoute = async () => {
+      try {
+        const nextRoute = await fetchRouteForProfile(userLocation, markers.end, selectedRouteIndex);
+
+        if (nextRoute) {
+          setNavigationRoute(nextRoute);
+          lastNavigationRefreshLocationRef.current = userLocation;
+        }
+      } finally {
+        navigationFetchInFlightRef.current = false;
+      }
+    };
+
+    refreshNavigationRoute();
+  }, [isNavigating, markers, selectedRouteIndex, userLocation]);
+
+  useEffect(() => {
+    if (!isReportsOpen || !selectedTripForReport?.coords?.length) {
+      return;
+    }
+
+    const fitTimer = setTimeout(() => {
+      reportMapRef.current?.fitToCoordinates(selectedTripForReport.coords, {
+        edgePadding: { top: 70, right: 50, bottom: 70, left: 50 },
+        animated: true,
+      });
+    }, 250);
+
+    return () => clearTimeout(fitTimer);
+  }, [isReportsOpen, selectedTripForReport]);
+
   const toggleDrawer = () => {
     const toValue = isDrawerOpen ? -width : 0;
     Animated.timing(drawerAnim, { toValue, duration: 300, useNativeDriver: true }).start();
     setIsDrawerOpen(!isDrawerOpen);
+  };
+
+  const clearArrivalMessage = () => {
+    setArrivalMessage('');
+    setShowPostTripCard(false);
   };
 
   const openProfile = () => {
@@ -120,6 +336,13 @@ export default function App() {
   const handleFindRoute = async () => {
     Keyboard.dismiss();
     setLoading(true);
+    clearArrivalMessage();
+    setIsNavigating(false);
+    setNavigationRoute(null);
+    setNavigationLoading(false);
+    lastNavigationRefreshLocationRef.current = null;
+    navigationFetchInFlightRef.current = false;
+    navigationCompletionHandledRef.current = false;
     
     try {
       console.log("1. Starting route fetch...");
@@ -242,7 +465,336 @@ export default function App() {
   };
 
   // 🛡️ CRITICAL ERROR FIX: Safety check for empty routes
+  const handleStartNavigation = async () => {
+    if (!markers?.end || !userLocation) {
+      Alert.alert('Navigation unavailable', 'Live location is required before navigation can start.');
+      return;
+    }
+
+    setNavigationLoading(true);
+
+    try {
+      const liveRoute = await fetchRouteForProfile(userLocation, markers.end, selectedRouteIndex);
+
+      if (!liveRoute) {
+        Alert.alert('Navigation unavailable', 'Could not start live navigation for this route.');
+        return;
+      }
+
+      setNavigationRoute(liveRoute);
+      setIsNavigating(true);
+      clearArrivalMessage();
+      lastNavigationRefreshLocationRef.current = userLocation;
+      navigationCompletionHandledRef.current = false;
+
+      mapRef.current?.animateCamera(
+        {
+          center: {
+            latitude: userLocation.latitude,
+            longitude: userLocation.longitude,
+          },
+          zoom: 17,
+          pitch: 50,
+        },
+        { duration: 900 }
+      );
+    } finally {
+      setNavigationLoading(false);
+    }
+  };
+
+  const persistArrivalMessage = (message) => {
+    setArrivalMessage(message);
+  };
+
+  const resetNavigationState = () => {
+    setIsNavigating(false);
+    setNavigationRoute(null);
+    setNavigationLoading(false);
+    lastNavigationRefreshLocationRef.current = null;
+    navigationFetchInFlightRef.current = false;
+    navigationCompletionHandledRef.current = false;
+
+    if (currentRoute?.coords?.length) {
+      mapRef.current?.fitToCoordinates(currentRoute.coords, {
+        edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
+        animated: true,
+      });
+    }
+  };
+
+  const handleCompleteNavigation = React.useCallback(async () => {
+    const selectedRoute = allRoutes[selectedRouteIndex];
+    const completedTripDistance = Number.isFinite(navigationRoute?.distance)
+      ? navigationRoute.distance
+      : selectedRoute?.distance ?? 0;
+    const completedTrip = {
+      id: `${Date.now()}`,
+      startedFrom: startText,
+      destination: endText,
+      completedAt: new Date().toISOString(),
+      routeIndex: selectedRouteIndex,
+      distance: completedTripDistance,
+      safetyScore: selectedRoute?.safetyScore ?? 0,
+      coords: navigationRoute?.coords || selectedRoute?.coords || [],
+    };
+
+    if (user?.id) {
+      const nextTrips = await saveCompletedTrip(user.id, completedTrip);
+      setCompletedTrips(nextTrips);
+      setSelectedTripForReportId(completedTrip.id);
+    }
+
+    persistArrivalMessage(`Destination reached: ${endText}`);
+    setShowPostTripCard(true);
+    resetNavigationState();
+    Alert.alert(
+      'Destination reached',
+      'Navigation has ended and this route is now available in Route Reports.',
+      [
+        { text: 'Later', style: 'cancel' },
+        { text: 'Report now', onPress: () => setIsReportsOpen(true) },
+      ]
+    );
+  }, [allRoutes, endText, navigationRoute, selectedRouteIndex, startText, user?.id]);
+
+  useEffect(() => {
+    if (!isNavigating || !markers?.end || !userLocation || navigationCompletionHandledRef.current) {
+      return;
+    }
+
+    const distanceToDestination = getDistanceMeters(userLocation, markers.end);
+    const remainingDistance = Number.isFinite(navigationRoute?.distance) ? navigationRoute.distance : null;
+
+    if (
+      distanceToDestination <= ARRIVAL_THRESHOLD_METERS ||
+      (remainingDistance !== null && remainingDistance <= ARRIVAL_THRESHOLD_METERS)
+    ) {
+      navigationCompletionHandledRef.current = true;
+      void handleCompleteNavigation();
+    }
+  }, [isNavigating, markers, navigationRoute, userLocation, handleCompleteNavigation]);
+
+  const handleExitNavigation = () => {
+    resetNavigationState();
+  };
+
+  const handleSimulateStep = () => {
+    if (!__DEV__ || !navigationRoute?.coords?.length || !userLocation) {
+      return;
+    }
+
+    const closestIndex = getClosestCoordIndex(navigationRoute.coords, userLocation);
+    const lastIndex = navigationRoute.coords.length - 1;
+    const nextIndex = Math.min(
+      closestIndex >= 0 ? closestIndex + 8 : 8,
+      lastIndex
+    );
+    const nextCoord = nextIndex >= lastIndex && markers?.end
+      ? markers.end
+      : navigationRoute.coords[nextIndex];
+
+    if (!nextCoord) {
+      return;
+    }
+
+    lastNavigationRefreshLocationRef.current = null;
+    setUserLocation({
+      ...nextCoord,
+      accuracy: userLocation.accuracy,
+      altitude: userLocation.altitude,
+      altitudeAccuracy: userLocation.altitudeAccuracy,
+      heading: userLocation.heading,
+      speed: userLocation.speed,
+    });
+  };
+
+  const handleSubmitReport = async () => {
+    if (!selectedTripForReportId) {
+      Alert.alert('Select a trip', 'Finish a trip first, then choose it here to submit a report.');
+      return;
+    }
+
+    if (!reportPin) {
+      Alert.alert('Pin required', 'Tap the route preview to pin the exact area you want to report.');
+      return;
+    }
+
+    const selectedTrip = completedTrips.find((trip) => trip.id === selectedTripForReportId);
+
+    if (!selectedTrip) {
+      Alert.alert('Trip unavailable', 'That completed route could not be found.');
+      return;
+    }
+
+    const report = {
+      id: `${Date.now()}`,
+      tripId: selectedTrip.id,
+      type: reportType,
+      note: reportNote.trim(),
+      createdAt: new Date().toISOString(),
+      coordinate: reportPin,
+      routeSnapshot: {
+        startedFrom: selectedTrip.startedFrom,
+        destination: selectedTrip.destination,
+      },
+    };
+
+    if (user?.id) {
+      const nextReports = await saveTripReport(user.id, report);
+      setSubmittedReports(nextReports);
+    }
+
+    setReportNote('');
+    setReportType('Unsafe spot');
+    setReportPin(null);
+    Alert.alert('Report submitted', 'Thanks. This issue has been linked to your completed route.');
+  };
+
   const currentRoute = allRoutes && allRoutes.length > 0 ? allRoutes[selectedRouteIndex] : null;
+  const selectedTripForReport = completedTrips.find((trip) => trip.id === selectedTripForReportId) || null;
+  const selectedTripReports = selectedTripForReport
+    ? submittedReports.filter((report) => report.tripId === selectedTripForReport.id)
+    : [];
+
+  const getNearestRoutePoint = (trip, coordinate) => {
+    if (!trip?.coords?.length || !coordinate) {
+      return null;
+    }
+
+    return getClosestPointOnRoute(trip.coords, coordinate);
+  };
+
+  const handleSelectTripForReport = (tripId) => {
+    setSelectedTripForReportId(tripId);
+    setReportPin(null);
+    setReportNote('');
+    setReportType('Unsafe spot');
+  };
+
+  const handleRouteMapPress = (event) => {
+    if (!selectedTripForReport?.coords?.length) {
+      return;
+    }
+
+    const nearestPoint = getNearestRoutePoint(selectedTripForReport, event.nativeEvent.coordinate);
+
+    if (nearestPoint) {
+      setReportPin(nearestPoint);
+    }
+  };
+
+  const openReports = () => {
+    setIsReportsOpen(true);
+    setIsMyReportsOpen(false);
+    setIsDrawerOpen(false);
+    drawerAnim.setValue(-width);
+    setSelectedTripForReportId(null);
+    setReportPin(null);
+    setReportNote('');
+    setReportType('Unsafe spot');
+  };
+
+  const openMyReports = () => {
+    setIsMyReportsOpen(true);
+    setIsReportsOpen(false);
+    setIsDrawerOpen(false);
+    drawerAnim.setValue(-width);
+    setEditingReportId(null);
+    setEditReportType('Unsafe spot');
+    setEditReportNote('');
+  };
+
+  const handleBackToTripSelection = () => {
+    setSelectedTripForReportId(null);
+    setReportPin(null);
+    setReportNote('');
+    setReportType('Unsafe spot');
+  };
+
+  const handleClearTripHistory = () => {
+    if (!user?.id) {
+      return;
+    }
+
+    Alert.alert(
+      'Clear trip history',
+      'This will remove only your completed trip history. Submitted reports will stay available in My Reports.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            await clearTripHistory(user.id);
+            setCompletedTrips([]);
+            handleBackToTripSelection();
+          },
+        },
+      ]
+    );
+  };
+
+  const handleStartEditingReport = (report) => {
+    setEditingReportId(report.id);
+    setEditReportType(report.type);
+    setEditReportNote(report.note || '');
+  };
+
+  const handleCancelEditingReport = () => {
+    setEditingReportId(null);
+    setEditReportType('Unsafe spot');
+    setEditReportNote('');
+  };
+
+  const handleSaveEditedReport = async () => {
+    if (!user?.id || !editingReportId) {
+      return;
+    }
+
+    const nextReports = submittedReports.map((report) =>
+      report.id === editingReportId
+        ? {
+            ...report,
+            type: editReportType,
+            note: editReportNote.trim(),
+            updatedAt: new Date().toISOString(),
+          }
+        : report
+    );
+
+    const savedReports = await replaceTripReports(user.id, nextReports);
+    setSubmittedReports(savedReports);
+    handleCancelEditingReport();
+    Alert.alert('Report updated', 'Your submitted report has been updated.');
+  };
+
+  const handleDeleteReport = (reportId) => {
+    if (!user?.id) {
+      return;
+    }
+
+    Alert.alert(
+      'Delete report',
+      'This will permanently remove the selected report.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const nextReports = submittedReports.filter((report) => report.id !== reportId);
+            const savedReports = await replaceTripReports(user.id, nextReports);
+            setSubmittedReports(savedReports);
+
+            if (editingReportId === reportId) {
+              handleCancelEditingReport();
+            }
+          },
+        },
+      ]
+    );
+  };
 
   const getRouteTheme = (index) => {
     const route = allRoutes[index];
@@ -281,43 +833,53 @@ export default function App() {
         customMapStyle={isDarkMode ? mapDarkStyle : []}
         showsUserLocation={true}
       >
-        {/* POLYLINES - These still change color dynamically */}
-        {allRoutes.map((route, index) => {
-          const pathTheme = getRouteTheme(index);
-          const isFocused = index === selectedRouteIndex;
-          return (
-            <Polyline 
-              key={`route-${index}`}
-              coordinates={route.coords} 
-              strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} 
-              strokeWidth={isFocused ? 8 : 4}
-              zIndex={isFocused ? 1000 : 10 - index}
-              tappable={true}
-              onPress={() => setSelectedRouteIndex(index)}
-            />
-          );
-        })}
+        {isNavigating && navigationRoute ? (
+          <Polyline
+            key="active-navigation-route"
+            coordinates={navigationRoute.coords}
+            strokeColor={activeTheme.color}
+            strokeWidth={8}
+            zIndex={1000}
+          />
+        ) : (
+          <>
+            {allRoutes.map((route, index) => {
+              const pathTheme = getRouteTheme(index);
+              const isFocused = index === selectedRouteIndex;
+              return (
+                <Polyline 
+                  key={`route-${index}`}
+                  coordinates={route.coords} 
+                  strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} 
+                  strokeWidth={isFocused ? 8 : 4}
+                  zIndex={isFocused ? 1000 : 10 - index}
+                  tappable={true}
+                  onPress={() => setSelectedRouteIndex(index)}
+                />
+              );
+            })}
 
-        {/* DANGER ZONES - Locked to permanent full opacity. No jumping, no flashing. */}
-        {allRoutes.map((route, index) => {
-          return route.dangerZones?.map((zoneCoord, zIndex) => (
-            <Marker 
-              key={`danger-${index}-${zIndex}`} 
-              coordinate={zoneCoord}
-              zIndex={1001} // Always on top of lines
-              tracksViewChanges={false} // Safe to use now since opacity is static
-              anchor={{ x: 0.5, y: 0.5 }} 
-            >
-              <View style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
-                <Ionicons name="warning" size={10} color="#FFF" />
-              </View>
-            </Marker>
-          ));
-        })}
+            {allRoutes.map((route, index) => {
+              return route.dangerZones?.map((zoneCoord, zIndex) => (
+                <Marker 
+                  key={`danger-${index}-${zIndex}`} 
+                  coordinate={zoneCoord}
+                  zIndex={1001}
+                  tracksViewChanges={false}
+                  anchor={{ x: 0.5, y: 0.5 }} 
+                >
+                  <View style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
+                    <Ionicons name="warning" size={10} color="#FFF" />
+                  </View>
+                </Marker>
+              ));
+            })}
+          </>
+        )}
 
         {markers && (
           <>
-            <Marker coordinate={markers.start}><View style={styles.dotStart}/></Marker>
+            {!isNavigating && <Marker coordinate={markers.start}><View style={styles.dotStart}/></Marker>}
             <Marker coordinate={markers.end}><View style={[styles.dotEnd, {backgroundColor: activeTheme.color}]}/></Marker>
           </>
         )}
@@ -338,15 +900,50 @@ export default function App() {
                 {loading ? <ActivityIndicator color="#000"/> : <Text style={styles.btnText}>Find Safe Paths</Text>}
              </TouchableOpacity>
           </View>
+        ) : isNavigating ? (
+          <View style={[styles.minified, {backgroundColor: CARD_BG}]}>
+             <Text style={[styles.minTitle, {color: activeTheme.color}]}>NAVIGATING TO: {endText.toUpperCase()}</Text>
+             <Text style={[styles.minHint, {color: isDarkMode ? '#444' : '#999'}]}>Following your live location</Text>
+          </View>
         ) : (
           <TouchableOpacity style={[styles.minified, {backgroundColor: CARD_BG}]} onPress={() => setIsMinimized(false)}>
              <Text style={[styles.minTitle, {color: activeTheme.color}]}>DESTINATION: {endText.toUpperCase()}</Text>
-             <Text style={[styles.minHint, {color: isDarkMode ? '#444' : '#999'}]}>Tap to change route</Text>
+             <Text style={[styles.minHint, {color: isDarkMode ? '#444' : '#999'}]}>
+               {arrivalMessage || 'Tap to change route'}
+             </Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {isMinimized && currentRoute && (
+      {!isNavigating && showPostTripCard && completedTrips.length > 0 && (
+        <View style={styles.postTripContainer}>
+          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: activeTheme.color }]}>
+            <Text style={[styles.postTripTitle, { color: activeTheme.color }]}>DESTINATION REACHED</Text>
+            <Text style={[styles.postTripText, { color: UI_TEXT }]}>
+              {arrivalMessage || 'Your last route has been saved.'}
+            </Text>
+            <Text style={styles.postTripSubtext}>
+              You can now report unsafe spots, crimes, low lighting, or isolated areas on that route.
+            </Text>
+            <View style={styles.postTripActions}>
+              <TouchableOpacity
+                style={[styles.postTripPrimaryBtn, { backgroundColor: activeTheme.color }]}
+                onPress={openReports}
+              >
+                <Text style={styles.postTripPrimaryText}>Report Now</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.postTripSecondaryBtn, { borderColor: isDarkMode ? '#333' : '#D6D6D6' }]}
+                onPress={() => setShowPostTripCard(false)}
+              >
+                <Text style={[styles.postTripSecondaryText, { color: UI_TEXT }]}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {isMinimized && currentRoute && !isNavigating && !showPostTripCard && (
         <>
           <View style={styles.routeTray}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -370,8 +967,50 @@ export default function App() {
                 <Text style={[styles.subStatus, {color: isDarkMode ? '#444' : '#777'}]}>Analyzed via lighting & community reports.</Text>
               </View>
             </View>
+            <TouchableOpacity
+              style={[styles.navigationBtn, { backgroundColor: activeTheme.color }]}
+              onPress={handleStartNavigation}
+              disabled={navigationLoading}
+            >
+              {navigationLoading ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <>
+                  <Ionicons name="navigate" size={18} color="#000" />
+                  <Text style={styles.navigationBtnText}>Start</Text>
+                </>
+              )}
+            </TouchableOpacity>
           </View>
         </>
+      )}
+
+      {isNavigating && navigationRoute && (
+        <View style={styles.dashboardContainer}>
+          <View style={[styles.navigationPanel, { backgroundColor: CARD_BG, borderColor: activeTheme.color }]}>
+            <View style={styles.navigationMeta}>
+              <Text style={[styles.navigationLabel, { color: activeTheme.color }]}>NAVIGATION ACTIVE</Text>
+              <Text style={[styles.navigationText, { color: UI_TEXT }]}>
+                {Number.isFinite(navigationRoute.distance)
+                  ? `${(navigationRoute.distance / 1000).toFixed(2)} km remaining`
+                  : 'Destination reached'}
+              </Text>
+              <Text style={[styles.navigationSubtext, { color: isDarkMode ? '#777' : '#666' }]}>
+                Route updates live and recenters as you move.
+              </Text>
+            </View>
+            <TouchableOpacity style={styles.exitNavigationBtn} onPress={handleExitNavigation}>
+              <Ionicons name="close-circle-outline" size={18} color="#FFF" />
+              <Text style={styles.exitNavigationText}>Exit navigation</Text>
+            </TouchableOpacity>
+            {__DEV__ && (
+              <TouchableOpacity style={styles.debugSimBtn} onPress={handleSimulateStep}>
+                <Ionicons name="footsteps-outline" size={18} color="#111" />
+                <Text style={styles.debugSimText}>Simulate forward</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
       )}
 
       <Animated.View style={[styles.drawer, { backgroundColor: CARD_BG, transform: [{ translateX: drawerAnim }] }]}>
@@ -391,7 +1030,8 @@ export default function App() {
 
         <View style={styles.drawerLinks}>
           <DrawerItem icon="shield-checkmark" label="Protection Active" color="#00FF94" isDark={isDarkMode} />
-          <DrawerItem icon="warning" label="Report Unsafe Spot" color={UI_TEXT} isDark={isDarkMode} />
+          <DrawerItem icon="warning" label="Report Unsafe Spot" color={UI_TEXT} isDark={isDarkMode} onPress={openReports} />
+          <DrawerItem icon="documents" label="My Reports" color={UI_TEXT} isDark={isDarkMode} onPress={openMyReports} />
           <DrawerItem icon="people" label="Emergency Contacts" color={UI_TEXT} isDark={isDarkMode} />
           <DrawerItem icon="settings" label="Settings" color={UI_TEXT} isDark={isDarkMode} />
         </View>
@@ -420,6 +1060,326 @@ export default function App() {
         <Ionicons name="warning" size={24} color="#FFF" />
         <Text style={styles.sosFabText}>SOS</Text>
       </TouchableOpacity>
+
+      <Modal
+        visible={isMyReportsOpen}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsMyReportsOpen(false)}
+      >
+        <View style={[styles.fullScreenModalPage, { backgroundColor: CARD_BG }]}>
+          <View style={[styles.fullScreenModalBody, { backgroundColor: CARD_BG }]}>
+            <View style={styles.profileHeader}>
+              <View>
+                <Text style={[styles.profileTitle, { color: UI_TEXT }]}>My Reports</Text>
+                <Text style={styles.profileSubtitle}>
+                  Review, edit, or delete the reports you have already submitted.
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsMyReportsOpen(false)}>
+                <Ionicons name="close" size={24} color={UI_TEXT} />
+              </TouchableOpacity>
+            </View>
+
+            {submittedReports.length === 0 ? (
+              <View style={styles.emptyReportsState}>
+                <Ionicons name="documents-outline" size={36} color={activeTheme.color} />
+                <Text style={[styles.emptyReportsTitle, { color: UI_TEXT }]}>No submitted reports yet</Text>
+                <Text style={styles.emptyReportsText}>
+                  Reports you submit after a completed trip will appear here for future edits or deletion.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                {submittedReports.map((report) => {
+                  const isEditing = editingReportId === report.id;
+                  return (
+                    <View key={report.id} style={styles.manageReportCard}>
+                      <Text style={[styles.reportHistoryType, { color: UI_TEXT }]}>{report.type}</Text>
+                      <Text style={styles.reportHistoryMeta}>
+                        {report.routeSnapshot?.startedFrom || 'Unknown start'} to {report.routeSnapshot?.destination || 'Unknown destination'}
+                      </Text>
+                      <Text style={styles.reportHistoryMeta}>
+                        {new Date(report.updatedAt || report.createdAt).toLocaleString()}
+                      </Text>
+                      {report.coordinate && (
+                        <Text style={styles.reportHistoryMeta}>
+                          Pin: {report.coordinate.latitude.toFixed(5)}, {report.coordinate.longitude.toFixed(5)}
+                        </Text>
+                      )}
+
+                      {isEditing ? (
+                        <>
+                          <Text style={[styles.profileLabel, { marginTop: 14 }]}>Issue Type</Text>
+                          <View style={styles.reportTypeRow}>
+                            {['Unsafe spot', 'Crime', 'Low lighting', 'Isolated area'].map((type) => {
+                              const isSelected = editReportType === type;
+                              return (
+                                <TouchableOpacity
+                                  key={`${report.id}-${type}`}
+                                  style={[
+                                    styles.reportChip,
+                                    {
+                                      backgroundColor: isSelected ? activeTheme.color : 'transparent',
+                                      borderColor: isSelected ? activeTheme.color : isDarkMode ? '#222' : '#DDD',
+                                    },
+                                  ]}
+                                  onPress={() => setEditReportType(type)}
+                                >
+                                  <Text style={[styles.reportChipText, { color: isSelected ? '#000' : UI_TEXT }]}>{type}</Text>
+                                </TouchableOpacity>
+                              );
+                            })}
+                          </View>
+                          <Text style={[styles.profileLabel, { marginTop: 4 }]}>Description</Text>
+                          <ProfileField
+                            label="Description"
+                            value={editReportNote}
+                            onChangeText={setEditReportNote}
+                            textColor={UI_TEXT}
+                            optional
+                          />
+                          <View style={styles.manageReportActions}>
+                            <TouchableOpacity style={styles.reportCancelBtn} onPress={handleCancelEditingReport}>
+                              <Text style={[styles.reportCancelText, { color: UI_TEXT }]}>Cancel</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.reportSubmitBtn, { backgroundColor: activeTheme.color }]} onPress={handleSaveEditedReport}>
+                              <Text style={styles.profileSaveText}>Save Changes</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </>
+                      ) : (
+                        <>
+                          <Text style={styles.reportHistoryNote}>{report.note || 'No extra notes added.'}</Text>
+                          <View style={styles.manageReportActions}>
+                            <TouchableOpacity style={styles.manageReportGhostBtn} onPress={() => handleStartEditingReport(report)}>
+                              <Ionicons name="create-outline" size={16} color={UI_TEXT} />
+                              <Text style={[styles.manageReportGhostText, { color: UI_TEXT }]}>Edit</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.manageReportDeleteBtn} onPress={() => handleDeleteReport(report.id)}>
+                              <Ionicons name="trash-outline" size={16} color="#FF6B6B" />
+                              <Text style={styles.manageReportDeleteText}>Delete</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </>
+                      )}
+                    </View>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={isReportsOpen}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={() => setIsReportsOpen(false)}
+      >
+        <View style={[styles.fullScreenModalPage, { backgroundColor: CARD_BG }]}>
+          <View style={[styles.fullScreenModalBody, { backgroundColor: CARD_BG }]}>
+            <View style={styles.profileHeader}>
+              <View>
+                <Text style={[styles.profileTitle, { color: UI_TEXT }]}>Route Reports</Text>
+                <Text style={styles.profileSubtitle}>
+                  Only completed navigation paths are listed here for reporting.
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setIsReportsOpen(false)}>
+                <Ionicons name="close" size={24} color={UI_TEXT} />
+              </TouchableOpacity>
+            </View>
+
+            {completedTrips.length === 0 ? (
+              <View style={styles.emptyReportsState}>
+                <Ionicons name="navigate-circle-outline" size={36} color={activeTheme.color} />
+                <Text style={[styles.emptyReportsTitle, { color: UI_TEXT }]}>No completed trips yet</Text>
+                <Text style={styles.emptyReportsText}>
+                  Finish a route and it will appear here so you can report unsafe spots, low lighting, crimes, or isolated stretches.
+                </Text>
+              </View>
+            ) : !selectedTripForReport ? (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={styles.reportSectionHeader}>
+                  <Text style={styles.profileLabel}>Choose A Trip</Text>
+                  <TouchableOpacity style={styles.clearHistoryPill} onPress={handleClearTripHistory}>
+                    <Ionicons name="trash-outline" size={14} color="#FF6B6B" />
+                    <Text style={styles.clearHistoryPillText}>Clear History</Text>
+                  </TouchableOpacity>
+                </View>
+                {completedTrips.map((trip) => {
+                  return (
+                    <TouchableOpacity
+                      key={trip.id}
+                      style={[
+                        styles.completedTripCard,
+                        {
+                          borderColor: isDarkMode ? '#222' : '#DDD',
+                          backgroundColor: 'transparent',
+                        },
+                      ]}
+                      onPress={() => handleSelectTripForReport(trip.id)}
+                    >
+                      <Text style={[styles.completedTripDestination, { color: UI_TEXT }]}>{trip.destination}</Text>
+                      <Text style={styles.completedTripMeta}>
+                        From {trip.startedFrom} • {(trip.distance / 1000).toFixed(2)} km
+                      </Text>
+                      <Text style={styles.completedTripMeta}>
+                        {new Date(trip.completedAt).toLocaleString()}
+                      </Text>
+                      <View style={styles.tripSelectRow}>
+                        <Text style={[styles.tripSelectText, { color: activeTheme.color }]}>Select trip</Text>
+                        <Ionicons name="arrow-forward" size={16} color={activeTheme.color} />
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            ) : (
+              <ScrollView showsVerticalScrollIndicator={false}>
+                <View style={styles.selectedTripHeader}>
+                  <TouchableOpacity style={styles.tripBackBtn} onPress={handleBackToTripSelection}>
+                    <Ionicons name="arrow-back" size={16} color={UI_TEXT} />
+                    <Text style={[styles.tripBackText, { color: UI_TEXT }]}>Back to trips</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.clearHistoryPill} onPress={handleClearTripHistory}>
+                    <Ionicons name="trash-outline" size={14} color="#FF6B6B" />
+                    <Text style={styles.clearHistoryPillText}>Clear History</Text>
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.selectedTripCard}>
+                  <Text style={[styles.completedTripDestination, { color: UI_TEXT }]}>{selectedTripForReport.destination}</Text>
+                  <Text style={styles.completedTripMeta}>
+                    From {selectedTripForReport.startedFrom} • {(selectedTripForReport.distance / 1000).toFixed(2)} km
+                  </Text>
+                  <Text style={styles.completedTripMeta}>
+                    {new Date(selectedTripForReport.completedAt).toLocaleString()}
+                  </Text>
+                </View>
+
+                <Text style={styles.profileLabel}>Tap Route To Place Pin</Text>
+                <View style={styles.reportMapWrap}>
+                  <MapView
+                    key={selectedTripForReport.id}
+                    ref={reportMapRef}
+                    style={styles.reportMap}
+                    provider={PROVIDER_GOOGLE}
+                    customMapStyle={isDarkMode ? mapDarkStyle : []}
+                    initialRegion={{
+                      latitude: selectedTripForReport.coords[0].latitude,
+                      longitude: selectedTripForReport.coords[0].longitude,
+                      latitudeDelta: 0.02,
+                      longitudeDelta: 0.02,
+                    }}
+                    onMapReady={() => {
+                      reportMapRef.current?.fitToCoordinates(selectedTripForReport.coords, {
+                        edgePadding: { top: 70, right: 50, bottom: 70, left: 50 },
+                        animated: false,
+                      });
+                    }}
+                    onPress={handleRouteMapPress}
+                  >
+                    <Polyline
+                      coordinates={selectedTripForReport.coords}
+                      strokeColor={activeTheme.color}
+                      strokeWidth={5}
+                    />
+                    <Marker coordinate={selectedTripForReport.coords[0]}>
+                      <View style={styles.dotStart} />
+                    </Marker>
+                    <Marker coordinate={selectedTripForReport.coords[selectedTripForReport.coords.length - 1]}>
+                      <View style={[styles.dotEnd, { backgroundColor: activeTheme.color }]} />
+                    </Marker>
+                    {reportPin && (
+                      <Marker coordinate={reportPin}>
+                        <View style={styles.reportPinMarker}>
+                          <Ionicons name="location-sharp" size={18} color="#FF3B30" />
+                        </View>
+                      </Marker>
+                    )}
+                  </MapView>
+                  <View style={styles.reportMapBadge}>
+                    <Ionicons name="location-sharp" size={16} color={activeTheme.color} />
+                    <Text style={[styles.reportMapBadgeText, { color: UI_TEXT }]}>Tap route to drop pin</Text>
+                  </View>
+                </View>
+                <Text style={styles.reportPinHint}>
+                  {reportPin
+                    ? 'Pin set on the selected route.'
+                    : 'Tap the route preview to drop the report icon exactly where the problem happened.'}
+                </Text>
+
+                <Text style={styles.profileLabel}>Issue Type</Text>
+                <View style={styles.reportTypeRow}>
+                  {['Unsafe spot', 'Crime', 'Low lighting', 'Isolated area'].map((type) => {
+                    const isSelected = reportType === type;
+                    return (
+                      <TouchableOpacity
+                        key={type}
+                        style={[
+                          styles.reportChip,
+                          {
+                            backgroundColor: isSelected ? activeTheme.color : 'transparent',
+                            borderColor: isSelected ? activeTheme.color : isDarkMode ? '#222' : '#DDD',
+                          },
+                        ]}
+                        onPress={() => setReportType(type)}
+                      >
+                        <Text style={[styles.reportChipText, { color: isSelected ? '#000' : UI_TEXT }]}>{type}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+
+                <Text style={[styles.profileLabel, { marginTop: 18 }]}>Description</Text>
+                <ProfileField
+                  label="Description"
+                  value={reportNote}
+                  onChangeText={setReportNote}
+                  textColor={UI_TEXT}
+                  optional
+                />
+
+                {selectedTripForReport && (
+                  <>
+                    <Text style={[styles.profileLabel, { marginTop: 4 }]}>Reports For Selected Trip</Text>
+                    {selectedTripReports.length === 0 ? (
+                      <Text style={styles.noReportsText}>No reports submitted on this route yet.</Text>
+                    ) : (
+                      selectedTripReports.map((report) => (
+                        <View key={report.id} style={styles.reportHistoryCard}>
+                          <Text style={[styles.reportHistoryType, { color: UI_TEXT }]}>{report.type}</Text>
+                          <Text style={styles.reportHistoryMeta}>{new Date(report.createdAt).toLocaleString()}</Text>
+                          {report.coordinate && (
+                            <Text style={styles.reportHistoryMeta}>
+                              Pin: {report.coordinate.latitude.toFixed(5)}, {report.coordinate.longitude.toFixed(5)}
+                            </Text>
+                          )}
+                          <Text style={styles.reportHistoryNote}>{report.note || 'No extra notes added.'}</Text>
+                        </View>
+                      ))
+                    )}
+                  </>
+                )}
+              </ScrollView>
+            )}
+
+            {completedTrips.length > 0 && selectedTripForReport && (
+              <View style={styles.reportActionRow}>
+                <TouchableOpacity style={styles.reportCancelBtn} onPress={handleBackToTripSelection}>
+                  <Text style={[styles.reportCancelText, { color: UI_TEXT }]}>Back</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.reportSubmitBtn, { backgroundColor: activeTheme.color }]} onPress={handleSubmitReport}>
+                  <Text style={styles.profileSaveText}>Submit Report</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={isProfileOpen}
@@ -525,8 +1485,8 @@ export default function App() {
   );
 }
 
-const DrawerItem = ({ icon, label, color, isDark }) => (
-  <TouchableOpacity style={styles.drawerItem}>
+const DrawerItem = ({ icon, label, color, isDark, onPress }) => (
+  <TouchableOpacity style={styles.drawerItem} onPress={onPress}>
     <Ionicons name={icon} size={22} color={color} />
     <Text style={[styles.drawerItemLabel, {color: color === '#00FF94' ? color : isDark ? '#888' : '#444'}]}>{label}</Text>
   </TouchableOpacity>
@@ -559,13 +1519,20 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { width, height },
   menuBtn: { position: 'absolute', top: 60, left: 20, width: 55, height: 55, borderRadius: 18, justifyContent: 'center', alignItems: 'center', zIndex: 90, elevation: 10 },
-  topOverlay: { position: 'absolute', top: 135, width: '100%', paddingHorizontal: 20 },
+  topOverlay: { position: 'absolute', top: 135, width: '100%', paddingHorizontal: 20, zIndex: 80 },
   fullSearch: { borderRadius: 25, padding: 22, borderWidth: 1, elevation: 5 },
   logoBrand: { fontSize: 10, fontWeight: '900', letterSpacing: 3, marginBottom: 15 },
   minified: { borderRadius: 15, padding: 15, borderLeftWidth: 6 },
   minTitle: { fontSize: 13, fontWeight: '900' },
   minHint: { fontSize: 10, marginTop: 2 },
-  input: { height: 35, fontWeight: 'bold', fontSize: 15 },
+  input: {
+    minHeight: 48,
+    paddingVertical: 10,
+    fontWeight: 'bold',
+    fontSize: 16,
+    lineHeight: 22,
+    textAlignVertical: 'center',
+  },
   line: { height: 1, marginVertical: 10 },
   searchBtn: { height: 50, borderRadius: 12, justifyContent: 'center', alignItems: 'center', marginTop: 15 },
   btnText: { fontWeight: '900', color: '#000', fontSize: 14 },
@@ -587,11 +1554,60 @@ const styles = StyleSheet.create({
   logoutBtn: { flexDirection: 'row', alignItems: 'center', marginTop: 18, paddingHorizontal: 6 },
   logoutText: { color: '#FF6B6B', fontWeight: '900', letterSpacing: 1, marginLeft: 10 },
   closeBtn: { marginTop: 40, alignItems: 'center' },
-  routeTray: { position: 'absolute', bottom: 170, paddingLeft: 20, width: '100%' },
-  routeTab: { padding: 15, borderRadius: 18, marginRight: 12, borderWidth: 1, width: 120 },
-  tabType: { fontSize: 10, fontWeight: '900' },
-  dashboardContainer: { position: 'absolute', bottom: 30, width: '100%', alignItems: 'center' },
+  routeTray: { position: 'absolute', bottom: 235, paddingLeft: 20, width: '100%', zIndex: 85, elevation: 9 },
+  routeTab: { paddingVertical: 16, paddingHorizontal: 15, borderRadius: 18, marginRight: 12, borderWidth: 1, width: 150, minHeight: 66, justifyContent: 'center' },
+  tabType: { fontSize: 11, fontWeight: '900', lineHeight: 16 },
+  postTripContainer: { position: 'absolute', top: 220, width: '100%', paddingHorizontal: 20, zIndex: 86, elevation: 10 },
+  postTripCard: { borderRadius: 22, padding: 18, borderWidth: 1.5 },
+  postTripTitle: { fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
+  postTripText: { fontSize: 18, fontWeight: '900', marginTop: 8, lineHeight: 24 },
+  postTripSubtext: { color: '#888', fontSize: 12, marginTop: 8, lineHeight: 18 },
+  postTripActions: { flexDirection: 'row', marginTop: 16 },
+  postTripPrimaryBtn: { flex: 1, height: 46, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 10 },
+  postTripPrimaryText: { color: '#000', fontWeight: '900', fontSize: 13 },
+  postTripSecondaryBtn: { width: 100, height: 46, borderRadius: 14, borderWidth: 1, justifyContent: 'center', alignItems: 'center' },
+  postTripSecondaryText: { fontWeight: '800', fontSize: 13 },
+  dashboardContainer: { position: 'absolute', bottom: 30, width: '100%', alignItems: 'center', zIndex: 84, elevation: 8 },
   dashboard: { width: width * 0.92, borderRadius: 25, padding: 22, flexDirection: 'row', alignItems: 'center', borderTopWidth: 3 },
+  navigationBtn: {
+    marginTop: 14,
+    width: width * 0.92,
+    height: 56,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  navigationBtnText: { color: '#000', fontWeight: '900', fontSize: 15, marginLeft: 8 },
+  navigationPanel: {
+    width: width * 0.92,
+    borderRadius: 25,
+    padding: 20,
+    borderWidth: 1.5,
+  },
+  navigationMeta: { marginBottom: 16 },
+  navigationLabel: { fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
+  navigationText: { fontSize: 22, fontWeight: '900', marginTop: 8 },
+  navigationSubtext: { fontSize: 12, marginTop: 6, lineHeight: 18 },
+  exitNavigationBtn: {
+    height: 50,
+    borderRadius: 16,
+    backgroundColor: '#FF3B30',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  exitNavigationText: { color: '#FFF', fontWeight: '900', fontSize: 14, marginLeft: 8 },
+  debugSimBtn: {
+    marginTop: 12,
+    height: 46,
+    borderRadius: 14,
+    backgroundColor: '#F4D35E',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+  debugSimText: { color: '#111', fontWeight: '900', fontSize: 13, marginLeft: 8 },
   scoreBox: { width: 60, height: 60, borderRadius: 30, borderWidth: 3, justifyContent: 'center', alignItems: 'center' },
   scoreNum: { fontSize: 20, fontWeight: '900' },
   info: { marginLeft: 15, flex: 1 },
@@ -602,6 +1618,8 @@ const styles = StyleSheet.create({
   dangerIconContainer: { width: 18, height: 18, borderRadius: 9, backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: '#FFF', elevation: 4 },
   profileModalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   profileModal: { minHeight: height * 0.72, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 24 },
+  fullScreenModalPage: { flex: 1, paddingTop: 52 },
+  fullScreenModalBody: { flex: 1, paddingHorizontal: 24, paddingBottom: 24 },
   profileHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 },
   profileTitle: { fontSize: 28, fontWeight: '900' },
   profileSubtitle: { color: '#777', marginTop: 4, maxWidth: width * 0.65 },
@@ -611,6 +1629,45 @@ const styles = StyleSheet.create({
   profileInputDisabled: { opacity: 0.65 },
   profileSaveBtn: { height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
   profileSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
+  emptyReportsState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 40 },
+  emptyReportsTitle: { fontSize: 20, fontWeight: '900', marginTop: 16 },
+  emptyReportsText: { color: '#777', marginTop: 10, textAlign: 'center', lineHeight: 20 },
+  reportSectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  clearHistoryPill: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderColor: '#3A1A1A', backgroundColor: '#1A0E0E', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  clearHistoryPillText: { color: '#FF6B6B', fontSize: 12, fontWeight: '800', marginLeft: 6 },
+  completedTripCard: { borderWidth: 1, borderRadius: 18, padding: 16, marginBottom: 12 },
+  completedTripDestination: { fontSize: 16, fontWeight: '900' },
+  completedTripMeta: { color: '#888', marginTop: 6, lineHeight: 18 },
+  tripSelectRow: { flexDirection: 'row', alignItems: 'center', marginTop: 12 },
+  tripSelectText: { fontWeight: '800', fontSize: 13, marginRight: 6 },
+  selectedTripHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  tripBackBtn: { flexDirection: 'row', alignItems: 'center' },
+  tripBackText: { fontSize: 13, fontWeight: '800', marginLeft: 8 },
+  selectedTripCard: { borderWidth: 1, borderColor: '#222', borderRadius: 18, padding: 16, marginBottom: 18, backgroundColor: 'rgba(255,255,255,0.03)' },
+  reportTypeRow: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: 12 },
+  reportChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, marginRight: 10, marginBottom: 10 },
+  reportChipText: { fontWeight: '800', fontSize: 12 },
+  reportMapWrap: { overflow: 'hidden', borderRadius: 22, marginBottom: 12, borderWidth: 1, borderColor: '#222', position: 'relative' },
+  reportMap: { width: '100%', height: 300 },
+  reportMapBadge: { position: 'absolute', top: 12, left: 12, flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 },
+  reportMapBadgeText: { fontSize: 12, fontWeight: '800', marginLeft: 6 },
+  reportPinMarker: { justifyContent: 'center', alignItems: 'center' },
+  reportPinHint: { color: '#888', fontSize: 12, marginBottom: 14, lineHeight: 18 },
+  noReportsText: { color: '#777', marginTop: 4, marginBottom: 8 },
+  reportHistoryCard: { borderRadius: 16, padding: 14, backgroundColor: 'rgba(255,255,255,0.03)', marginBottom: 10 },
+  reportHistoryType: { fontSize: 14, fontWeight: '900' },
+  reportHistoryMeta: { color: '#777', fontSize: 12, marginTop: 4 },
+  reportHistoryNote: { color: '#999', marginTop: 8, lineHeight: 18 },
+  manageReportCard: { borderRadius: 18, padding: 16, backgroundColor: 'rgba(255,255,255,0.03)', marginBottom: 14, borderWidth: 1, borderColor: '#222' },
+  manageReportActions: { flexDirection: 'row', marginTop: 14 },
+  manageReportGhostBtn: { height: 44, borderRadius: 14, borderWidth: 1, borderColor: '#333', paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', flexDirection: 'row', marginRight: 12 },
+  manageReportGhostText: { fontWeight: '800', fontSize: 13, marginLeft: 8 },
+  manageReportDeleteBtn: { height: 44, borderRadius: 14, borderWidth: 1, borderColor: '#4A1E1E', backgroundColor: '#1A0E0E', paddingHorizontal: 16, justifyContent: 'center', alignItems: 'center', flexDirection: 'row' },
+  manageReportDeleteText: { color: '#FF6B6B', fontWeight: '800', fontSize: 13, marginLeft: 8 },
+  reportActionRow: { flexDirection: 'row', marginTop: 18 },
+  reportCancelBtn: { width: 110, height: 56, borderRadius: 16, borderWidth: 1, borderColor: '#333', justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+  reportCancelText: { fontWeight: '800', fontSize: 15 },
+  reportSubmitBtn: { flex: 1, height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },
   sosFab: {
     position: 'absolute',
     right: 22,

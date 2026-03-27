@@ -124,6 +124,8 @@ export default function App() {
   const navigationFetchInFlightRef = useRef(false);
   const navigationCompletionHandledRef = useRef(false);
   const notifiedDangerZonesRef = useRef(new Set());
+  const notifiedLowLightingZonesRef = useRef(new Set());
+  const notifiedIsolatedZonesRef = useRef(new Set());
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -152,6 +154,8 @@ export default function App() {
   const [arrivalMessage, setArrivalMessage] = useState('');
   const [showPostTripCard, setShowPostTripCard] = useState(false);
   const [showUnsafeZoneCard, setShowUnsafeZoneCard] = useState(false);
+  const [showLowLightingCard, setShowLowLightingCard] = useState(false);
+  const [showIsolatedCard, setShowIsolatedCard] = useState(false);
   const [reportPin, setReportPin] = useState(null);
   const [editingReportId, setEditingReportId] = useState(null);
   const [editReportType, setEditReportType] = useState('Unsafe spot');
@@ -349,6 +353,8 @@ export default function App() {
     navigationFetchInFlightRef.current = false;
     navigationCompletionHandledRef.current = false;
     notifiedDangerZonesRef.current.clear();
+      notifiedLowLightingZonesRef.current.clear();
+      notifiedIsolatedZonesRef.current.clear();
     
     try {
       console.log("1. Starting route fetch...");
@@ -396,15 +402,29 @@ export default function App() {
                           tierIndex === 1 ? Math.floor(seed * 2) + 2 : 
                           Math.floor(seed * 3) + 4;
 
+      let numLowLighting = tierIndex === 0 ? 1 : tierIndex === 1 ? 2 : Math.floor(seed * 3) + 3;
+      let numIsolated = tierIndex === 0 ? 1 : tierIndex === 1 ? 1 : Math.floor(seed * 2) + 2;
+
       const dangerZones = [];
+      const lowLightingZones = [];
+      const isolatedZones = [];
+
       if (route.coords.length > 10) {
         for (let i = 0; i < numDangerZones; i++) {
           const pSeed = Math.abs((hash * (i + 13)) % 10000) / 10000;
           dangerZones.push(route.coords[Math.floor(pSeed * (route.coords.length - 4)) + 2]);
         }
+        for (let i = 0; i < numLowLighting; i++) {
+          const pSeed2 = Math.abs((hash * (i + 23)) % 10000) / 10000;
+          lowLightingZones.push(route.coords[Math.floor(pSeed2 * (route.coords.length - 4)) + 2]);
+        }
+        for (let i = 0; i < numIsolated; i++) {
+          const pSeed3 = Math.abs((hash * (i + 33)) % 10000) / 10000;
+          isolatedZones.push(route.coords[Math.floor(pSeed3 * (route.coords.length - 4)) + 2]);
+        }
       }
 
-      return { ...route, safetyScore: score, dangerZones };
+      return { ...route, safetyScore: score, dangerZones, lowLightingZones, isolatedZones };
     });
 
     // Finally, sort by safetyScore so the UI always defaults to the Green route
@@ -488,6 +508,8 @@ export default function App() {
 
       const originalRoute = allRoutes[selectedRouteIndex];
       liveRoute.dangerZones = originalRoute?.dangerZones || [];
+      liveRoute.lowLightingZones = originalRoute?.lowLightingZones || [];
+      liveRoute.isolatedZones = originalRoute?.isolatedZones || [];
       liveRoute.safetyScore = originalRoute?.safetyScore || 0;
 
       setNavigationRoute(liveRoute);
@@ -496,6 +518,8 @@ export default function App() {
       lastNavigationRefreshLocationRef.current = userLocation;
       navigationCompletionHandledRef.current = false;
       notifiedDangerZonesRef.current.clear();
+      notifiedLowLightingZonesRef.current.clear();
+      notifiedIsolatedZonesRef.current.clear();
 
       mapRef.current?.animateCamera(
         {
@@ -526,6 +550,8 @@ export default function App() {
     navigationFetchInFlightRef.current = false;
     navigationCompletionHandledRef.current = false;
     notifiedDangerZonesRef.current.clear();
+      notifiedLowLightingZonesRef.current.clear();
+      notifiedIsolatedZonesRef.current.clear();
 
     if (currentRoute?.coords?.length) {
       mapRef.current?.fitToCoordinates(currentRoute.coords, {
@@ -587,19 +613,41 @@ export default function App() {
     }
   }, [isNavigating, markers, navigationRoute, userLocation, handleCompleteNavigation]);
 
-  // 🔴 NEW: 200m Proximity Check for Danger Zones
+  // 🔴 NEW: 200m Proximity Check for Multi-Zones
   useEffect(() => {
-    if (!isNavigating || !navigationRoute?.dangerZones || !userLocation) {
+    if (!isNavigating || !userLocation || !navigationRoute) {
       return;
     }
 
-    navigationRoute.dangerZones.forEach((zone, index) => {
-      const distance = getDistanceMeters(userLocation, zone);
-      if (distance <= 200 && !notifiedDangerZonesRef.current.has(index)) {
-        notifiedDangerZonesRef.current.add(index);
-        setShowUnsafeZoneCard(true);
-      }
-    });
+    if (navigationRoute.dangerZones) {
+      navigationRoute.dangerZones.forEach((zone, index) => {
+        const distance = getDistanceMeters(userLocation, zone);
+        if (distance <= 200 && !notifiedDangerZonesRef.current.has(index)) {
+          notifiedDangerZonesRef.current.add(index);
+          setShowUnsafeZoneCard(true);
+        }
+      });
+    }
+
+    if (navigationRoute.lowLightingZones) {
+      navigationRoute.lowLightingZones.forEach((zone, index) => {
+        const distance = getDistanceMeters(userLocation, zone);
+        if (distance <= 200 && !notifiedLowLightingZonesRef.current.has(index)) {
+          notifiedLowLightingZonesRef.current.add(index);
+          setShowLowLightingCard(true);
+        }
+      });
+    }
+
+    if (navigationRoute.isolatedZones) {
+      navigationRoute.isolatedZones.forEach((zone, index) => {
+        const distance = getDistanceMeters(userLocation, zone);
+        if (distance <= 200 && !notifiedIsolatedZonesRef.current.has(index)) {
+          notifiedIsolatedZonesRef.current.add(index);
+          setShowIsolatedCard(true);
+        }
+      });
+    }
   }, [isNavigating, navigationRoute, userLocation]);
 
   const handleExitNavigation = () => {
@@ -882,6 +930,32 @@ export default function App() {
                 </View>
               </Marker>
             ))}
+            {navigationRoute.lowLightingZones?.map((zoneCoord, zIndex) => (
+              <Marker 
+                key={`nav-light-${zIndex}`} 
+                coordinate={zoneCoord}
+                zIndex={1001}
+                tracksViewChanges={false}
+                anchor={{ x: 0.5, y: 0.5 }} 
+              >
+                <View style={[styles.dangerIconContainer, { opacity: 0.95, backgroundColor: '#FFC107' }]}>
+                  <Ionicons name="flashlight" size={10} color="#000" />
+                </View>
+              </Marker>
+            ))}
+            {navigationRoute.isolatedZones?.map((zoneCoord, zIndex) => (
+              <Marker 
+                key={`nav-iso-${zIndex}`} 
+                coordinate={zoneCoord}
+                zIndex={1001}
+                tracksViewChanges={false}
+                anchor={{ x: 0.5, y: 0.5 }} 
+              >
+                <View style={[styles.dangerIconContainer, { opacity: 0.95, backgroundColor: '#5E5CE6' }]}>
+                  <Ionicons name="eye-off" size={10} color="#FFF" />
+                </View>
+              </Marker>
+            ))}
           </>
         ) : (
           <>
@@ -904,19 +978,49 @@ export default function App() {
             {allRoutes.map((route, index) => {
               if (index !== selectedRouteIndex) return null;
               
-              return route.dangerZones?.map((zoneCoord, zIndex) => (
-                <Marker 
-                  key={`danger-${index}-${zIndex}`} 
-                  coordinate={zoneCoord}
-                  zIndex={1001}
-                  tracksViewChanges
-                  anchor={{ x: 0.5, y: 0.5 }} 
-                >
-                  <View collapsable={false} style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
-                    <Ionicons name="warning" size={10} color="#FFF" />
-                  </View>
-                </Marker>
-              ));
+              return (
+                <React.Fragment key={`all-markers-${index}`}>
+                  {route.dangerZones?.map((zoneCoord, zIndex) => (
+                    <Marker 
+                      key={`danger-${index}-${zIndex}`} 
+                      coordinate={zoneCoord}
+                      zIndex={1001}
+                      tracksViewChanges={false}
+                      anchor={{ x: 0.5, y: 0.5 }} 
+                    >
+                      <View collapsable={false} style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
+                        <Ionicons name="warning" size={10} color="#FFF" />
+                      </View>
+                    </Marker>
+                  ))}
+                  {route.lowLightingZones?.map((zoneCoord, zIndex) => (
+                    <Marker 
+                      key={`light-${index}-${zIndex}`} 
+                      coordinate={zoneCoord}
+                      zIndex={1001}
+                      tracksViewChanges={false}
+                      anchor={{ x: 0.5, y: 0.5 }} 
+                    >
+                      <View collapsable={false} style={[styles.dangerIconContainer, { opacity: 0.95, backgroundColor: '#FFC107' }]}>
+                        <Ionicons name="flashlight" size={10} color="#000" />
+                      </View>
+                    </Marker>
+                  ))}
+                  {route.isolatedZones?.map((zoneCoord, zIndex) => (
+                    <Marker 
+                      key={`iso-${index}-${zIndex}`} 
+                      coordinate={zoneCoord}
+                      zIndex={1001}
+                      tracksViewChanges={false}
+                      anchor={{ x: 0.5, y: 0.5 }} 
+                    >
+                      <View collapsable={false} style={[styles.dangerIconContainer, { opacity: 0.95, backgroundColor: '#5E5CE6' }]}>
+                        <Ionicons name="eye-off" size={10} color="#FFF" />
+                      </View>
+                    </Marker>
+                  ))}
+                </React.Fragment>
+              );
             })}
           </>
         )}
@@ -1001,6 +1105,50 @@ export default function App() {
               <TouchableOpacity
                 style={[styles.postTripPrimaryBtn, { backgroundColor: '#FF3B30', flex: 1 }]}
                 onPress={() => setShowUnsafeZoneCard(false)}
+              >
+                <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {isNavigating && showLowLightingCard && (
+        <View style={styles.postTripContainer}>
+          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#FFC107' }]}>
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+              <Ionicons name="flashlight" size={20} color="#FFC107"/>
+              <Text style={[styles.postTripTitle, { color: '#FFC107', marginLeft: 8, marginBottom: 0 }]}>LOW LIGHTING AHEAD</Text>
+            </View>
+            <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
+              You are approaching an area with historically poor street lighting. Stay vigilant.
+            </Text>
+            <View style={styles.postTripActions}>
+              <TouchableOpacity
+                style={[styles.postTripPrimaryBtn, { backgroundColor: '#FFC107', flex: 1 }]}
+                onPress={() => setShowLowLightingCard(false)}
+              >
+                <Text style={[styles.postTripPrimaryText, { color: '#000' }]}>Acknowledged</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {isNavigating && showIsolatedCard && (
+        <View style={styles.postTripContainer}>
+          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#5E5CE6' }]}>
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+              <Ionicons name="eye-off" size={20} color="#5E5CE6"/>
+              <Text style={[styles.postTripTitle, { color: '#5E5CE6', marginLeft: 8, marginBottom: 0 }]}>ISOLATED STRETCH AHEAD</Text>
+            </View>
+            <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
+              You are approaching a deserted or sparsely populated stretch. Keep your guards up.
+            </Text>
+            <View style={styles.postTripActions}>
+              <TouchableOpacity
+                style={[styles.postTripPrimaryBtn, { backgroundColor: '#5E5CE6', flex: 1 }]}
+                onPress={() => setShowIsolatedCard(false)}
               >
                 <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
               </TouchableOpacity>

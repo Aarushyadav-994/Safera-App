@@ -13,6 +13,44 @@ import { fetchRealRoute, fetchRouteForProfile, getCoordsFromText } from './Route
 import { getActiveUser, logoutUser, updateActiveUserProfile } from './userDatabase';
 import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports, saveCompletedTrip, saveTripReport } from './tripReports';
 
+import * as SMS from 'expo-sms';
+import * as TaskManager from 'expo-task-manager';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
+
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error('Background Location Error:', error);
+    return;
+  }
+  if (data) {
+    const { locations } = data;
+    const loc = locations[0];
+    try {
+      const emergencyId = await AsyncStorage.getItem('active_emergency_id');
+      const routeStart = await AsyncStorage.getItem('sos_route_start');
+      const routeEnd = await AsyncStorage.getItem('sos_route_end');
+      if (emergencyId) {
+        await fetch('http://192.168.1.15:3000/update-location', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            emergencyId,
+            lat: loc.coords.latitude,
+            lng: loc.coords.longitude,
+            timestamp: Date.now(),
+            startedFrom: routeStart,
+            destination: routeEnd
+          })
+        });
+      }
+    } catch (e) {
+      console.log('Error posting background location:', e);
+    }
+  }
+});
+
 const { width, height } = Dimensions.get('window');
 const NAVIGATION_REROUTE_DISTANCE_METERS = 20;
 const ARRIVAL_THRESHOLD_METERS = 30;
@@ -177,8 +215,29 @@ export default function App() {
           timeInterval: 5000,
           distanceInterval: 10,
         },
-        (nextLocation) => {
+        async (nextLocation) => {
           setUserLocation(nextLocation.coords);
+          try {
+            const emergencyId = await AsyncStorage.getItem('active_emergency_id');
+            if (emergencyId) {
+              const routeStart = await AsyncStorage.getItem('sos_route_start');
+              const routeEnd = await AsyncStorage.getItem('sos_route_end');
+              await fetch('http://192.168.1.15:3000/update-location', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  emergencyId,
+                  lat: nextLocation.coords.latitude,
+                  lng: nextLocation.coords.longitude,
+                  timestamp: Date.now(),
+                  startedFrom: routeStart,
+                  destination: routeEnd
+                })
+              });
+            }
+          } catch (e) {
+            console.log('Foreground location sync error:', e);
+          }
         }
       );
     })();
@@ -451,17 +510,75 @@ export default function App() {
     }
 
     const targetLabel = isPolice ? 'Police' : 'Emergency Contact';
-    const liveLocationMessage = getLiveLocationMessage();
     setIsSosOpen(false);
 
-    Alert.alert(
-      'SOS sent',
-      `${targetLabel} notified.\n${liveLocationMessage}\n\nDialing ${phoneNumber}...`
-    );
+    // 1. Generate Emergency ID
+    const emergencyId = `user-${Date.now()}`;
+    await AsyncStorage.setItem('active_emergency_id', emergencyId);
+    let routeStart = 'Unknown';
+    let routeEnd = 'Unknown';
+    if (isNavigating) {
+      await AsyncStorage.setItem('sos_route_start', startText);
+      await AsyncStorage.setItem('sos_route_end', endText);
+      routeStart = startText;
+      routeEnd = endText;
+    }
 
+    // IMMEDIATELY PING SERVER ONCE (Crucial for stationary testing)
+    if (userLocation) {
+      fetch('http://192.168.1.15:3000/update-location', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emergencyId,
+          lat: userLocation.latitude,
+          lng: userLocation.longitude,
+          timestamp: Date.now(),
+          startedFrom: routeStart,
+          destination: routeEnd
+        })
+      }).catch(e => console.log('Init SOS POST error:', e));
+    }
+
+    // 2. Start Background Tracking
+    try {
+      const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+      if (bgStatus === 'granted') {
+        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+          accuracy: Location.Accuracy.Balanced,
+          timeInterval: 5000,
+          distanceInterval: 10,
+          showsBackgroundLocationIndicator: true,
+          foregroundService: {
+            notificationTitle: "SOS Active",
+            notificationBody: "Live tracking is running in the background.",
+            notificationColor: "#FF3B30",
+          }
+        });
+      }
+    } catch (e) {
+      console.log("Could not start background tracking:", e);
+    }
+
+    // 3. Draft the SMS
+    const trackingLink = `http://192.168.1.15:3000/live/${emergencyId}`;
+    const smsMessage = `SOS! I am in a critical situation.\n\nTrack my live location here:\n${trackingLink}`;
+
+    console.log(`\n=================================\n👉 LIVE TRACKING LINK: ${trackingLink}\n=================================\n`);
+
+    const isAvailable = await SMS.isAvailableAsync();
+    if (isAvailable && !isPolice) {
+      await SMS.sendSMSAsync([phoneNumber], smsMessage);
+    } else {
+      Alert.alert(
+        'SOS generated',
+        `${targetLabel} notified via link.\n\nCOPY LINK:\n${trackingLink}\n\nDialing ${phoneNumber}...`
+      );
+    }
+
+    // 4. Dial the number
     const phoneUrl = `tel:${phoneNumber}`;
     const canCall = await Linking.canOpenURL(phoneUrl);
-
     if (canCall) {
       await Linking.openURL(phoneUrl);
     } else {
@@ -626,14 +743,40 @@ export default function App() {
     }
 
     lastNavigationRefreshLocationRef.current = null;
-    setUserLocation({
+    const updatedLocation = {
       ...nextCoord,
       accuracy: userLocation.accuracy,
       altitude: userLocation.altitude,
       altitudeAccuracy: userLocation.altitudeAccuracy,
       heading: userLocation.heading,
       speed: userLocation.speed,
-    });
+    };
+    setUserLocation(updatedLocation);
+
+    // Sync simulated movement to live tracker dashboard
+    (async () => {
+      try {
+        const emergencyId = await AsyncStorage.getItem('active_emergency_id');
+        if (emergencyId) {
+          const routeStart = await AsyncStorage.getItem('sos_route_start');
+          const routeEnd = await AsyncStorage.getItem('sos_route_end');
+          await fetch('http://192.168.1.15:3000/update-location', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emergencyId,
+              lat: updatedLocation.latitude,
+              lng: updatedLocation.longitude,
+              timestamp: Date.now(),
+              startedFrom: routeStart,
+              destination: routeEnd
+            })
+          });
+        }
+      } catch (e) {
+        console.log('Simulated location sync error:', e);
+      }
+    })();
   };
 
   const handleSubmitReport = async () => {

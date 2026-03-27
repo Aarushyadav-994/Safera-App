@@ -151,6 +151,7 @@ export default function App() {
   const [reportNote, setReportNote] = useState('');
   const [arrivalMessage, setArrivalMessage] = useState('');
   const [showPostTripCard, setShowPostTripCard] = useState(false);
+  const [showUnsafeZoneCard, setShowUnsafeZoneCard] = useState(false);
   const [reportPin, setReportPin] = useState(null);
   const [editingReportId, setEditingReportId] = useState(null);
   const [editReportType, setEditReportType] = useState('Unsafe spot');
@@ -520,6 +521,7 @@ export default function App() {
     setIsNavigating(false);
     setNavigationRoute(null);
     setNavigationLoading(false);
+    setShowUnsafeZoneCard(false);
     lastNavigationRefreshLocationRef.current = null;
     navigationFetchInFlightRef.current = false;
     navigationCompletionHandledRef.current = false;
@@ -595,10 +597,7 @@ export default function App() {
       const distance = getDistanceMeters(userLocation, zone);
       if (distance <= 200 && !notifiedDangerZonesRef.current.has(index)) {
         notifiedDangerZonesRef.current.add(index);
-        Alert.alert(
-          '⚠️ Unsafe Zone Ahead',
-          'You are entering a flagged high-risk area. Please stay alert.'
-        );
+        setShowUnsafeZoneCard(true);
       }
     });
   }, [isNavigating, navigationRoute, userLocation]);
@@ -982,6 +981,28 @@ export default function App() {
                 onPress={() => setShowPostTripCard(false)}
               >
                 <Text style={[styles.postTripSecondaryText, { color: UI_TEXT }]}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {isNavigating && showUnsafeZoneCard && (
+        <View style={styles.postTripContainer}>
+          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#FF3B30' }]}>
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+              <Ionicons name="warning" size={20} color="#FF3B30"/>
+              <Text style={[styles.postTripTitle, { color: '#FF3B30', marginLeft: 8, marginBottom: 0 }]}>UNSAFE ZONE AHEAD</Text>
+            </View>
+            <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
+              You are within 200m of a flagged high-risk area. Please stay alert to your surroundings.
+            </Text>
+            <View style={styles.postTripActions}>
+              <TouchableOpacity
+                style={[styles.postTripPrimaryBtn, { backgroundColor: '#FF3B30', flex: 1 }]}
+                onPress={() => setShowUnsafeZoneCard(false)}
+              >
+                <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
               </TouchableOpacity>
             </View>
           </View>

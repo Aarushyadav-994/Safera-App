@@ -1098,8 +1098,6 @@ export default function App() {
           <DrawerItem icon="shield-checkmark" label="Protection Active" color="#00FF94" isDark={isDarkMode} />
           <DrawerItem icon="warning" label="Report Unsafe Spot" color={UI_TEXT} isDark={isDarkMode} onPress={openReports} />
           <DrawerItem icon="documents" label="My Reports" color={UI_TEXT} isDark={isDarkMode} onPress={openMyReports} />
-          <DrawerItem icon="people" label="Emergency Contacts" color={UI_TEXT} isDark={isDarkMode} />
-          <DrawerItem icon="settings" label="Settings" color={UI_TEXT} isDark={isDarkMode} />
         </View>
 
         <View style={styles.drawerFooter}>
@@ -1742,6 +1740,8 @@ const styles = StyleSheet.create({
     height: 82,
     borderRadius: 41,
     backgroundColor: '#FF3B30',
+    borderWidth: 4,
+    borderColor: '#FFF',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 950,

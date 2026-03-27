@@ -123,6 +123,7 @@ export default function App() {
   const lastNavigationRefreshLocationRef = useRef(null);
   const navigationFetchInFlightRef = useRef(false);
   const navigationCompletionHandledRef = useRef(false);
+  const notifiedDangerZonesRef = useRef(new Set());
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -150,6 +151,7 @@ export default function App() {
   const [reportNote, setReportNote] = useState('');
   const [arrivalMessage, setArrivalMessage] = useState('');
   const [showPostTripCard, setShowPostTripCard] = useState(false);
+  const [showUnsafeZoneCard, setShowUnsafeZoneCard] = useState(false);
   const [reportPin, setReportPin] = useState(null);
   const [editingReportId, setEditingReportId] = useState(null);
   const [editReportType, setEditReportType] = useState('Unsafe spot');
@@ -260,6 +262,9 @@ export default function App() {
         const nextRoute = await fetchRouteForProfile(userLocation, markers.end, selectedRouteIndex);
 
         if (nextRoute) {
+          const originalRoute = allRoutes[selectedRouteIndex];
+          nextRoute.dangerZones = originalRoute?.dangerZones || [];
+          nextRoute.safetyScore = originalRoute?.safetyScore || 0;
           setNavigationRoute(nextRoute);
           lastNavigationRefreshLocationRef.current = userLocation;
         }
@@ -343,6 +348,7 @@ export default function App() {
     lastNavigationRefreshLocationRef.current = null;
     navigationFetchInFlightRef.current = false;
     navigationCompletionHandledRef.current = false;
+    notifiedDangerZonesRef.current.clear();
     
     try {
       console.log("1. Starting route fetch...");
@@ -480,11 +486,16 @@ export default function App() {
         return;
       }
 
+      const originalRoute = allRoutes[selectedRouteIndex];
+      liveRoute.dangerZones = originalRoute?.dangerZones || [];
+      liveRoute.safetyScore = originalRoute?.safetyScore || 0;
+
       setNavigationRoute(liveRoute);
       setIsNavigating(true);
       clearArrivalMessage();
       lastNavigationRefreshLocationRef.current = userLocation;
       navigationCompletionHandledRef.current = false;
+      notifiedDangerZonesRef.current.clear();
 
       mapRef.current?.animateCamera(
         {
@@ -510,9 +521,11 @@ export default function App() {
     setIsNavigating(false);
     setNavigationRoute(null);
     setNavigationLoading(false);
+    setShowUnsafeZoneCard(false);
     lastNavigationRefreshLocationRef.current = null;
     navigationFetchInFlightRef.current = false;
     navigationCompletionHandledRef.current = false;
+    notifiedDangerZonesRef.current.clear();
 
     if (currentRoute?.coords?.length) {
       mapRef.current?.fitToCoordinates(currentRoute.coords, {
@@ -573,6 +586,21 @@ export default function App() {
       void handleCompleteNavigation();
     }
   }, [isNavigating, markers, navigationRoute, userLocation, handleCompleteNavigation]);
+
+  // 🔴 NEW: 200m Proximity Check for Danger Zones
+  useEffect(() => {
+    if (!isNavigating || !navigationRoute?.dangerZones || !userLocation) {
+      return;
+    }
+
+    navigationRoute.dangerZones.forEach((zone, index) => {
+      const distance = getDistanceMeters(userLocation, zone);
+      if (distance <= 200 && !notifiedDangerZonesRef.current.has(index)) {
+        notifiedDangerZonesRef.current.add(index);
+        setShowUnsafeZoneCard(true);
+      }
+    });
+  }, [isNavigating, navigationRoute, userLocation]);
 
   const handleExitNavigation = () => {
     resetNavigationState();
@@ -833,13 +861,28 @@ export default function App() {
         showsUserLocation={true}
       >
         {isNavigating && navigationRoute ? (
-          <Polyline
-            key="active-navigation-route"
-            coordinates={navigationRoute.coords}
-            strokeColor={activeTheme.color}
-            strokeWidth={8}
-            zIndex={1000}
-          />
+          <>
+            <Polyline
+              key="active-navigation-route"
+              coordinates={navigationRoute.coords}
+              strokeColor={activeTheme.color}
+              strokeWidth={8}
+              zIndex={1000}
+            />
+            {navigationRoute.dangerZones?.map((zoneCoord, zIndex) => (
+              <Marker 
+                key={`nav-danger-${zIndex}`} 
+                coordinate={zoneCoord}
+                zIndex={1001}
+                tracksViewChanges={false}
+                anchor={{ x: 0.5, y: 0.5 }} 
+              >
+                <View style={[styles.dangerIconContainer, { opacity: 0.95 }]}>
+                  <Ionicons name="warning" size={10} color="#FFF" />
+                </View>
+              </Marker>
+            ))}
+          </>
         ) : (
           <>
             {allRoutes.map((route, index) => {
@@ -859,6 +902,8 @@ export default function App() {
             })}
 
             {allRoutes.map((route, index) => {
+              if (index !== selectedRouteIndex) return null;
+              
               return route.dangerZones?.map((zoneCoord, zIndex) => (
                 <Marker 
                   key={`danger-${index}-${zIndex}`} 
@@ -936,6 +981,28 @@ export default function App() {
                 onPress={() => setShowPostTripCard(false)}
               >
                 <Text style={[styles.postTripSecondaryText, { color: UI_TEXT }]}>Dismiss</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {isNavigating && showUnsafeZoneCard && (
+        <View style={styles.postTripContainer}>
+          <View style={[styles.postTripCard, { backgroundColor: CARD_BG, borderColor: '#FF3B30' }]}>
+            <View style={{flexDirection: 'row', alignItems: 'center', marginBottom: 8}}>
+              <Ionicons name="warning" size={20} color="#FF3B30"/>
+              <Text style={[styles.postTripTitle, { color: '#FF3B30', marginLeft: 8, marginBottom: 0 }]}>UNSAFE ZONE AHEAD</Text>
+            </View>
+            <Text style={[styles.postTripText, { color: UI_TEXT, marginBottom: 12 }]}>
+              You are within 200m of a flagged high-risk area. Please stay alert to your surroundings.
+            </Text>
+            <View style={styles.postTripActions}>
+              <TouchableOpacity
+                style={[styles.postTripPrimaryBtn, { backgroundColor: '#FF3B30', flex: 1 }]}
+                onPress={() => setShowUnsafeZoneCard(false)}
+              >
+                <Text style={styles.postTripPrimaryText}>Acknowledged</Text>
               </TouchableOpacity>
             </View>
           </View>

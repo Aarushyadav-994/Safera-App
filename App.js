@@ -589,15 +589,17 @@ export default function App() {
     const smsMessage = `SOS! I am in a critical situation.\n\nTrack my live location here:\n${trackingLink}`;
     console.log(`[SOS] Link: ${trackingLink}`);
 
+    const isAllowed = await SMS.isAvailableAsync();
+    console.log(`[SMS] isAvailable: ${isAllowed}, Contacts: ${JSON.stringify(contacts)}`);
+
     const handleSms = async () => {
       try {
-        const isAvailable = await SMS.isAvailableAsync();
-        console.log(`[SMS] isAvailable: ${isAvailable}`);
-        if (isAvailable && !isPolice) {
+        if (isAllowed && !isPolice) {
+          // Small timeout to let UI settle/modal close on iOS
           setTimeout(async () => {
             const { result } = await SMS.sendSMSAsync(contacts, smsMessage);
             console.log(`[SMS] Result: ${result}`);
-          }, 400);
+          }, 600);
         } else {
           Alert.alert(
             'SOS Triggered',
@@ -661,8 +663,7 @@ export default function App() {
     // 4. Trigger SMS & Dialer
     await handleSms();
 
-    if (isPolice || !isAvailable) { // If police, or if SMS handled by alert
-       // Dialer logic moved to Alert Press for some cases, but for Police it should be auto
+    if (isPolice || !isAllowed) { // If police, or if SMS handled by alert
        if (isPolice) {
           const phoneUrl = `tel:${primaryPhone}`;
           Linking.openURL(phoneUrl);

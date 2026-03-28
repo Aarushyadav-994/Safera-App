@@ -1097,7 +1097,7 @@ export default function App() {
     const realScore = route ? route.safetyScore : 0; 
 
     if (index === 0) return { color: '#00FF94', score: realScore, label: '🛡️ MAXIMUM SAFETY' };
-    if (index === 1) return { color: '#3498db', score: realScore, label: '🛣️ BALANCED' };
+    if (index === 1) return { color: '#FF9500', score: realScore, label: '🛣️ BALANCED' };
     return { color: '#FF3B30', score: realScore, label: '⚠️ HIGH RISK' };
   };
 
@@ -1715,7 +1715,7 @@ export default function App() {
                   >
                     <Polyline
                       coordinates={selectedTripForReport.coords}
-                      strokeColor={activeTheme.color}
+                      strokeColor={hexToRgba(activeTheme.color, 1)}
                       strokeWidth={5}
                     />
                     <Marker coordinate={selectedTripForReport.coords[0]}>

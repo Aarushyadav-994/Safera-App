@@ -1,32 +1,32 @@
-# SAFERA 🛡️
+# SAFERA
 **AI-Enhanced Navigation for Secure Urban Commuting**
 
-Safera is a specialized navigation engine designed to prioritize personal safety over traditional shortest-path routing. Unlike standard GPS apps that focus solely on distance or time, Safera analyzes infrastructure lighting, and community-sourced safety reports to recommend secure transit corridors for vulnerable commuters.
+Safera is a specialized navigation engine designed to prioritize personal safety over traditional shortest-path routing. Unlike standard GPS apps that focus solely on distance or time, Safera analyzes infrastructure lighting and community-sourced safety reports to recommend secure transit corridors for vulnerable commuters.
 
 ---
 
-## 🌟 CORE FEATURES
+## CORE FEATURES
 
-### 📡 1. SOS Live-Mesh Tracking
+### 1. SOS Live-Mesh Tracking
 *   **Encrypted Broadcast**: Instantly trigger an emergency protocol that generates a unique live-tracking ID.
 *   **Multi-Contact Alert**: Automatically drafts and sends SMS notifications to all saved emergency contacts with a secure live-tracking link.
 *   **Secure Tunneling**: Leveraging ngrok to provide worldwide access to the live tracking dashboard.
 
-### ⚠️ 2. Multi-Zone Proximity Alerts
+### 2. Multi-Zone Proximity Alerts
 *   **Safety Geofencing**: Real-time monitoring of risk tiers:
-    *   🔴 **High-Risk Zones**: Areas with verified safety incidents.
-    *   🟡 **Low Lighting**: Stretches with poor street illumination.
-    *   🔵 **Isolated Areas**: Deserted paths with low footfall.
+    *   **High-Risk Zones**: Areas with verified safety incidents.
+    *   **Low Lighting**: Stretches with poor street illumination.
+    *   **Isolated Areas**: Deserted paths with low footfall.
 *   **Path Intelligence**: Alerts are intelligently triggered only when the user’s navigation path intersects with a risk zone.
 
-### 🎨 3. Safety-First UI/UX
+### 3. Safety-First UI/UX
 *   **Visual Route Tiers**: Color-coded polylines (Green: Safest, Orange: Secure, Red: Rapid/Shortest) for intuitive decision-making.
 *   **Nightwatch Mode**: High-contrast, dark-mode-first design for maximum visibility in low-light environments.
 *   **Native Optimization**: Custom rendering for iOS to ensure consistent safety-tier colors.
 
 ---
 
-## 🧠 THE SAFETY SCORE
+## THE SAFETY SCORE
 Safera's unique **Safety Score (0.0 - 10.0)** balances multiple risk factors:
 •  **Crime Metrics**: 40% weighting
 •  **Community Feedback**: 35% weighting
@@ -40,7 +40,7 @@ Routes are categorized analytically:
 
 ---
 
-## 🛠️ TECH STACK
+## TECH STACK
 *   **Frontend**: React Native (Expo)
 *   **Backend**: Node.js & Express (Real-time Tracker)
 *   **Mapping**: Leaflet.js & OpenStreetMap
@@ -49,7 +49,7 @@ Routes are categorized analytically:
 
 ---
 
-## 🏗️ INSTALLATION & SETUP
+## INSTALLATION & SETUP
 
 ### Frontend
 ```bash
@@ -68,14 +68,14 @@ node server.js
 
 ---
 
-## 👥 CONTRIBUTORS
+## CONTRIBUTORS
 •  **Aarush Yadav**
 •  **Paavni Bansal**
 •  **Devansh Rana**
 
 ---
 
-## 📜 LICENSE
+## LICENSE
 MIT License - see LICENSE file for details.
 adav
 •  Paavni Bansal

@@ -1,28 +1,92 @@
-# SAFERA / 🛡️ 
-**AI-Enhanced Secure Navigation for Vulnerable Commuters**
+# SAFERA
+**AI-Enhanced Navigation for Secure Urban Commuting**
 
-Safera is a specialized navigation engine developed at **Delhi Technological University (DTU)**. Unlike traditional GPS systems that optimize for the shortest distance, Safera prioritizes **Personal Safety** by analyzing urban geometry, lighting data, and community-sourced safety reports to provide secure transit corridors.
+Safera is a specialized navigation engine designed to prioritize personal safety over traditional shortest-path routing. Unlike standard GPS apps that focus solely on distance or time, Safera analyzes infrastructure lighting and community-sourced safety reports to recommend secure transit corridors for vulnerable commuters.
 
-## 🚀 Key Features
-* **Multi-Path Safety Analysis:** Choose between **Safest (Green)**, **Shortest (Red)**, and **Main Roads (Blue)**.
-* **Dynamic Safety Scoring:** Real-time 0.0-10.0 ranking of routes based on environmental risk factors.
-* **High-Readiness HUD:** A minimalist, dark-mode focused interface designed for low-light, high-stress scenarios.
-* **Shield Initialization:** Secure user onboarding with integrated Emergency SOS protocols.
-* **Last-Mile Precision:** Snap-to-gate routing for major institutions and transit hubs.
+---
 
-## 🛠️ Tech Stack
-* **Frontend:** React Native (Expo)
-* **Maps:** Google Maps API via `react-native-maps`
-* **Routing Engine:** OpenRouteService (ORS) API
-* **Icons:** Ionicons (Expo Vector Icons)
-* **Version Control:** Git/GitHub with MIT Licensing
+## CORE FEATURES
 
-## 🧠 Technical Challenges Solved
-* **Coordinate Jittering:** Implemented a custom lat/lng offset algorithm to prevent polyline overlap, ensuring multiple route options remain visually distinct.
-* **Asynchronous Multi-Fetch:** Engineered a concurrent API calling structure to retrieve and compare three different routing profiles (Walking vs. Car vs. Recommended) in a single session.
-* **Theme-Aware Branding:** Developed dynamic UI logic to ensure brand visibility and accessibility across both Daylight and Nightwatch modes.
+### 1. SOS Live-Mesh Tracking
+*   **Encrypted Broadcast**: Instantly trigger an emergency protocol that generates a unique live-tracking ID.
+*   **Multi-Contact Alert**: Automatically drafts and sends SMS notifications to all saved emergency contacts with a secure live-tracking link.
+*   **Secure Tunneling**: Leveraging ngrok to provide worldwide access to the live tracking dashboard.
 
-## 🏗️ Local Setup
-    **Clone the repository:**
-   ```bash
-   git clone [https://github.com/Aarushyadav-994/Safera-App.git](https://github.com/Aarushyadav-994/Safera-App.git)
+### 2. Multi-Zone Proximity Alerts
+*   **Safety Geofencing**: Real-time monitoring of risk tiers:
+    *   **High-Risk Zones**: Areas with verified safety incidents.
+    *   **Low Lighting**: Stretches with poor street illumination.
+    *   **Isolated Areas**: Deserted paths with low footfall.
+*   **Path Intelligence**: Alerts are intelligently triggered only when the user’s navigation path intersects with a risk zone.
+
+### 3. Safety-First UI/UX
+*   **Visual Route Tiers**: Color-coded polylines (Green: Safest, Orange: Secure, Red: Rapid/Shortest) for intuitive decision-making.
+*   **Nightwatch Mode**: High-contrast, dark-mode-first design for maximum visibility in low-light environments.
+*   **Native Optimization**: Custom rendering for iOS to ensure consistent safety-tier colors.
+
+---
+
+## THE SAFETY SCORE
+Safera's unique **Safety Score (0.0 - 10.0)** balances multiple risk factors:
+•  **Crime Metrics**: 40% weighting
+•  **Community Feedback**: 35% weighting
+•  **Lighting Quality**: 20% weighting
+•  **Crowd Presence**: 5% weighting
+
+Routes are categorized analytically:
+•  **Safe (Green)**: Score ≥ 7.0
+•  **Balanced (Blue)**: Score 4.0-6.9
+•  **High Risk (Red)**: Score < 4.0
+
+---
+
+## TECH STACK
+*   **Frontend**: React Native (Expo)
+*   **Backend**: Node.js & Express (Real-time Tracker)
+*   **Mapping**: Leaflet.js & OpenStreetMap
+*   **Routing Engine**: OpenRouteService (ORS)
+*   **Networking**: ngrok (Secure HTTPS Tunneling)
+
+---
+
+## INSTALLATION & SETUP
+
+### Frontend
+```bash
+git clone https://github.com/Aarushyadav-994/Safera-App.git
+cd Safera-App
+npm install
+npm start
+```
+
+### Backend (SOS Tracking)
+```bash
+cd tracker-backend
+npm install
+node server.js
+```
+
+---
+
+## CONTRIBUTORS
+•  **Aarush Yadav**
+•  **Paavni Bansal** (Team Leader)
+•  **Devansh Rana**
+
+---
+
+## LICENSE
+MIT License - see LICENSE file for details.
+adav
+•  Paavni Bansal
+•  Devansh Rana
+
+For academic or research use, please cite:
+
+Yadav, A., Bansal, P., & Rana, D. (2026). Safera: AI-Enhanced Secure Navigation System.
+Delhi Technological University.
+
+
+## License
+
+MIT License - see LICENSE file for details.

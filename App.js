@@ -53,7 +53,10 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       if (emergencyId) {
         await fetch(`${BACKEND_URL}/update-location`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 
+            'Content-Type': 'application/json',
+            'ngrok-skip-browser-warning': 'true'
+          },
           body: JSON.stringify({
             emergencyId,
             lat: loc.coords.latitude,
@@ -249,7 +252,10 @@ export default function App() {
                 const routeEnd = await AsyncStorage.getItem('sos_route_end');
                 await fetch(`${BACKEND_URL}/update-location`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
+                  },
                   body: JSON.stringify({
                     emergencyId,
                     lat: nextLocation.coords.latitude,
@@ -586,7 +592,10 @@ export default function App() {
     if (userLocation) {
       fetch(`${BACKEND_URL}/update-location`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
         body: JSON.stringify({
           emergencyId,
           lat: userLocation.latitude,
@@ -662,7 +671,10 @@ export default function App() {
     if (userLocation) {
       fetch(`${BACKEND_URL}/update-location`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
         body: JSON.stringify({
           emergencyId,
           lat: userLocation.latitude,
@@ -891,7 +903,10 @@ export default function App() {
           const routeEnd = await AsyncStorage.getItem('sos_route_end');
           await fetch(`${BACKEND_URL}/update-location`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true'
+            },
             body: JSON.stringify({
               emergencyId,
               lat: updatedLocation.latitude,

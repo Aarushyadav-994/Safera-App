@@ -24,6 +24,17 @@ const BACKEND_URL = Platform.OS === 'android' && !debuggerHost ? 'http://10.0.2.
 
 const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 
+/**
+ * Converts hex color strings to rgba format for better cross-platform compatibility.
+ * Especially critical for iOS which can fail to parse 8-digit hex (#RRGGBBAA).
+ */
+const hexToRgba = (hex, alpha = 1) => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
 TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
   if (error) {
     console.error('Background Location Error:', error);
@@ -1123,7 +1134,7 @@ export default function App() {
             <Polyline
               key="active-navigation-route"
               coordinates={navigationRoute.coords}
-              strokeColor={activeTheme.color}
+              strokeColor={hexToRgba(activeTheme.color, 1)}
               strokeWidth={8}
               zIndex={1000}
             />
@@ -1176,7 +1187,7 @@ export default function App() {
                 <Polyline 
                   key={`route-${index}`}
                   coordinates={route.coords} 
-                  strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} 
+                  strokeColor={isFocused ? hexToRgba(pathTheme.color, 1) : hexToRgba(pathTheme.color, 0.2)} 
                   strokeWidth={isFocused ? 8 : 4}
                   zIndex={isFocused ? 1000 : 10 - index}
                   tappable={true}

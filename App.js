@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { calculateSafetyScore } from './SafetyEngine';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
-  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert, Platform
+  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert, Platform, Clipboard
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -584,55 +584,89 @@ export default function App() {
       }).catch(e => console.log('Init SOS POST error:', e));
     }
 
-    // 2. Start Background Tracking
-    try {
-      const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-      if (bgStatus === 'granted') {
-        await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: 5000,
-          distanceInterval: 10,
-          showsBackgroundLocationIndicator: true,
-          foregroundService: {
-            notificationTitle: "SOS Active",
-            notificationBody: "Live tracking is running in the background.",
-            notificationColor: "#FF3B30",
-          }
-        });
-      }
-    } catch (e) {
-      console.log("Could not start background tracking:", e);
-    }
+    // IMMEDIATELY DRAFT SMS (Don't let location permissions block this)
+    const trackingLink = `${BACKEND_URL}/live/${emergencyId}`;
+    const smsMessage = `SOS! I am in a critical situation.\n\nTrack my live location here:\n${trackingLink}`;
+    console.log(`[SOS] Link: ${trackingLink}`);
 
-    console.log(`\n=================================\n👉 LIVE TRACKING LINK: ${trackingLink}\n=================================\n`);
-
-    const isAvailable = await SMS.isAvailableAsync();
-    console.log(`[SMS] isAvailable: ${isAvailable}, Contacts: ${JSON.stringify(contacts)}`);
-
-    if (isAvailable && !isPolice) {
-      // Small timeout to let UI settle/modal close on iOS
-      setTimeout(async () => {
-        try {
-          const { result } = await SMS.sendSMSAsync(contacts, smsMessage);
-          console.log(`[SMS] Result: ${result}`);
-        } catch (e) {
-          console.error('[SMS] Send Error:', e);
+    const handleSms = async () => {
+      try {
+        const isAvailable = await SMS.isAvailableAsync();
+        console.log(`[SMS] isAvailable: ${isAvailable}`);
+        if (isAvailable && !isPolice) {
+          setTimeout(async () => {
+            const { result } = await SMS.sendSMSAsync(contacts, smsMessage);
+            console.log(`[SMS] Result: ${result}`);
+          }, 400);
+        } else {
+          Alert.alert(
+            'SOS Triggered',
+            `SMS draft unavailable.${!isPolice ? '\n\nTrack Link copy-ready below.' : ''}\n\nDialing ${primaryPhone}...`,
+            [
+              { text: 'Cancel Call', style: 'cancel' },
+              { 
+                text: 'Copy & Call', 
+                onPress: async () => {
+                  Clipboard?.setString?.(trackingLink);
+                  const phoneUrl = `tel:${primaryPhone}`;
+                  Linking.openURL(phoneUrl);
+                } 
+              }
+            ]
+          );
         }
-      }, 600);
-    } else {
-      Alert.alert(
-        'SOS generated',
-        `${targetLabel} notified via link.\n\nCOPY LINK:\n${trackingLink}\n\nDialing ${primaryPhone}...`
-      );
+      } catch (err) {
+        console.log('[SMS] Error:', err);
+      }
+    };
+
+    // 2. Start Logic (Don't await tracking setup to avoid blocking SMS)
+    (async () => {
+      try {
+        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+        if (bgStatus === 'granted') {
+          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 5000,
+            distanceInterval: 10,
+            showsBackgroundLocationIndicator: true,
+            foregroundService: {
+              notificationTitle: "SOS Active",
+              notificationBody: "Live tracking is running in the background.",
+              notificationColor: "#FF3B30",
+            }
+          });
+        }
+      } catch (e) {
+        console.log("[SOS] Background tracking skipped:", e.message);
+      }
+    })();
+
+    // 3. One-time initial ping
+    if (userLocation) {
+      fetch(`${BACKEND_URL}/update-location`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          emergencyId,
+          lat: userLocation.latitude,
+          lng: userLocation.longitude,
+          timestamp: Date.now(),
+          startedFrom: routeStart,
+          destination: routeEnd
+        })
+      }).catch(e => console.log('[SOS] Init Ping error:', e.message));
     }
 
-    // 4. Dial the number
-    const phoneUrl = `tel:${primaryPhone}`;
-    const canCall = await Linking.canOpenURL(phoneUrl);
-    if (canCall) {
-      await Linking.openURL(phoneUrl);
-    } else {
-      Alert.alert('Call unavailable', `Could not open the dialer for ${primaryPhone}.`);
+    // 4. Trigger SMS & Dialer
+    await handleSms();
+
+    if (isPolice || !isAvailable) { // If police, or if SMS handled by alert
+       // Dialer logic moved to Alert Press for some cases, but for Police it should be auto
+       if (isPolice) {
+          const phoneUrl = `tel:${primaryPhone}`;
+          Linking.openURL(phoneUrl);
+       }
     }
   };
 

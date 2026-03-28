@@ -1,4 +1,4 @@
-# SAFERA: AI-Enhanced Secure Navigation for Vulnerable Commuters
+# SAFERA
 
 Safera is a specialized navigation engine designed to prioritize personal safety over traditional shortest-path routing. Unlike standard GPS apps that focus solely on distance or time, Safera analyzes urban geometry, lighting conditions, and community-sourced safety reports to recommend secure transit corridors. This project emerged from research into commuter safety in urban environments, particularly for vulnerable groups like women and students traveling alone.
 
@@ -11,8 +11,6 @@ The safety scoring formula uses the following weights:
 •  Community safety reports: 35%
 •  Lighting conditions: 20%
 •  Crowd density: 5%
-
-Data was gathered through surveys, public lighting databases, and anonymized incident reports from local authorities.
 
 ## Project Structure
 
@@ -149,7 +147,6 @@ Routes are categorized as:
 •  OpenRouteService: Open-source routing engine
 •  Google Maps Platform: Mapping and location services
 •  Public Crime Data: Public safety statistics (anonymized)
-•  Community Surveys: Lighting and crowd density assessments
 •  User-Generated Reports: Real-time safety feedback
 
 ## Technical Implementation
@@ -174,14 +171,9 @@ Routes are categorized as:
 ## Contributing
 
 This project was developed by:
-•  Aarush Yadav
 •  Paavni Bansal (Team Leader)
+•  Aarush Yadav
 •  Devansh Rana
-
-For academic or research use, please cite:
-
-Yadav, A., Bansal, P., & Rana, D. (2026). Safera: AI-Enhanced Secure Navigation System.
-Delhi Technological University.
 
 
 ## License

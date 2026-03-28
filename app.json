@@ -13,17 +13,44 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "fetch"
+        ],
+        "NSLocationWhenInUseUsageDescription": "Allow Safera to show your location on the map.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Safera to track your live location during an active SOS even when the app is in background.",
+        "NSLocationAlwaysUsageDescription": "Allow Safera to continuously track your location for active SOS monitoring.",
+        "NSLocationUsageDescription": "Allow Safera to access your location to provide safe routing and SOS features."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "WAKE_LOCK"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Safera to show your location on the map.",
+          "locationAlwaysAndWhenInUsePermission": "Allow Safera to track your live location during an active SOS.",
+          "locationAlwaysPermission": "Allow Safera to track your live location for SOS even in the background."
+        }
+      ]
+    ]
   }
 }

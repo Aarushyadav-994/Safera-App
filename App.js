@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { calculateSafetyScore } from './SafetyEngine';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
-  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert
+  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert, Platform, Clipboard
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -12,6 +12,66 @@ import AuthScreen from './AuthScreen';
 import { fetchRealRoute, fetchRouteForProfile, getCoordsFromText } from './RouteService';
 import { getActiveUser, logoutUser, updateActiveUserProfile } from './userDatabase';
 import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports, saveCompletedTrip, saveTripReport } from './tripReports';
+
+import * as SMS from 'expo-sms';
+import * as TaskManager from 'expo-task-manager';
+import Constants from 'expo-constants';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const debuggerHost = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost;
+const hostIp = debuggerHost ? debuggerHost.split(':')[0] : '192.168.1.15';
+
+// PUBLIC NGROK URL FOR REMOTE ACCESS & iOS SECURITY COMPATIBILITY
+const NGROK_URL = 'https://harborous-shela-sustainingly.ngrok-free.dev';
+const BACKEND_URL = NGROK_URL; // Using ngrok for all devices to ensure HTTPS/Remote access
+
+const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
+
+/**
+ * Converts hex color strings to rgba format for better cross-platform compatibility.
+ * Especially critical for iOS which can fail to parse 8-digit hex (#RRGGBBAA).
+ */
+const hexToRgba = (hex, alpha = 1) => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+};
+
+TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error('Background Location Error:', error);
+    return;
+  }
+  if (data) {
+    const { locations } = data;
+    const loc = locations[0];
+    try {
+      const emergencyId = await AsyncStorage.getItem('active_emergency_id');
+      const routeStart = await AsyncStorage.getItem('sos_route_start');
+      const routeEnd = await AsyncStorage.getItem('sos_route_end');
+      if (emergencyId) {
+        await fetch(`${BACKEND_URL}/update-location`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'ngrok-skip-browser-warning': 'true'
+          },
+          body: JSON.stringify({
+            emergencyId,
+            lat: loc.coords.latitude,
+            lng: loc.coords.longitude,
+            timestamp: Date.now(),
+            startedFrom: routeStart,
+            destination: routeEnd
+          })
+        });
+      }
+    } catch (e) {
+      console.log('Error posting background location:', e);
+    }
+  }
+});
 
 const { width, height } = Dimensions.get('window');
 const NAVIGATION_REROUTE_DISTANCE_METERS = 20;
@@ -182,9 +242,33 @@ export default function App() {
           timeInterval: 5000,
           distanceInterval: 10,
         },
-        (nextLocation) => {
+        async (nextLocation) => {
           if (!isSimulatingRef.current) {
             setUserLocation(nextLocation.coords);
+            try {
+              const emergencyId = await AsyncStorage.getItem('active_emergency_id');
+              if (emergencyId) {
+                const routeStart = await AsyncStorage.getItem('sos_route_start');
+                const routeEnd = await AsyncStorage.getItem('sos_route_end');
+                await fetch(`${BACKEND_URL}/update-location`, {
+                  method: 'POST',
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'ngrok-skip-browser-warning': 'true'
+                  },
+                  body: JSON.stringify({
+                    emergencyId,
+                    lat: nextLocation.coords.latitude,
+                    lng: nextLocation.coords.longitude,
+                    timestamp: Date.now(),
+                    startedFrom: routeStart,
+                    destination: routeEnd
+                  })
+                });
+              }
+            } catch (e) {
+              console.log('Foreground location sync error:', e);
+            }
           }
         }
       );
@@ -472,29 +556,144 @@ export default function App() {
 
   const triggerSos = async (target) => {
     const isPolice = target === 'police';
-    const phoneNumber = isPolice ? '112' : user?.emergencyContact1;
+    const contacts = [];
+    if (isPolice) {
+      contacts.push('112');
+    } else {
+      if (user?.emergencyContact1) contacts.push(user.emergencyContact1);
+      if (user?.emergencyContact2) contacts.push(user.emergencyContact2);
+    }
 
-    if (!phoneNumber) {
+    if (contacts.length === 0) {
       Alert.alert('SOS unavailable', 'No emergency contact is saved in the profile yet.');
       return;
     }
 
+    const primaryPhone = contacts[0];
+
     const targetLabel = isPolice ? 'Police' : 'Emergency Contact';
-    const liveLocationMessage = getLiveLocationMessage();
     setIsSosOpen(false);
 
-    Alert.alert(
-      'SOS sent',
-      `${targetLabel} notified.\n${liveLocationMessage}\n\nDialing ${phoneNumber}...`
-    );
+    // 1. Generate Emergency ID
+    const emergencyId = `user-${Date.now()}`;
+    await AsyncStorage.setItem('active_emergency_id', emergencyId);
+    let routeStart = 'Unknown';
+    let routeEnd = 'Unknown';
+    if (isNavigating) {
+      await AsyncStorage.setItem('sos_route_start', startText);
+      await AsyncStorage.setItem('sos_route_end', endText);
+      routeStart = startText;
+      routeEnd = endText;
+    }
 
-    const phoneUrl = `tel:${phoneNumber}`;
-    const canCall = await Linking.canOpenURL(phoneUrl);
+    // IMMEDIATELY PING SERVER ONCE (Crucial for stationary testing)
+    console.log(`[SOS] Starting tracking. Backend: ${BACKEND_URL}, ID: ${emergencyId}`);
+    
+    if (userLocation) {
+      fetch(`${BACKEND_URL}/update-location`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        body: JSON.stringify({
+          emergencyId,
+          lat: userLocation.latitude,
+          lng: userLocation.longitude,
+          timestamp: Date.now(),
+          startedFrom: routeStart,
+          destination: routeEnd
+        })
+      }).catch(e => console.log('Init SOS POST error:', e));
+    }
 
-    if (canCall) {
-      await Linking.openURL(phoneUrl);
-    } else {
-      Alert.alert('Call unavailable', `Could not open the dialer for ${phoneNumber}.`);
+    // IMMEDIATELY DRAFT SMS (Don't let location permissions block this)
+    const trackingLink = `${BACKEND_URL}/live/${emergencyId}`;
+    const smsMessage = `SOS! I am in a critical situation.\n\nTrack my live location here:\n${trackingLink}`;
+    console.log(`[SOS] Link: ${trackingLink}`);
+
+    const isAllowed = await SMS.isAvailableAsync();
+    console.log(`[SMS] isAvailable: ${isAllowed}, Contacts: ${JSON.stringify(contacts)}`);
+
+    const handleSms = async () => {
+      try {
+        if (isAllowed && !isPolice) {
+          // Small timeout to let UI settle/modal close on iOS
+          setTimeout(async () => {
+            const { result } = await SMS.sendSMSAsync(contacts, smsMessage);
+            console.log(`[SMS] Result: ${result}`);
+          }, 600);
+        } else {
+          Alert.alert(
+            'SOS Triggered',
+            `SMS draft unavailable.${!isPolice ? '\n\nTrack Link copy-ready below.' : ''}\n\nDialing ${primaryPhone}...`,
+            [
+              { text: 'Cancel Call', style: 'cancel' },
+              { 
+                text: 'Copy & Call', 
+                onPress: async () => {
+                  Clipboard?.setString?.(trackingLink);
+                  const phoneUrl = `tel:${primaryPhone}`;
+                  Linking.openURL(phoneUrl);
+                } 
+              }
+            ]
+          );
+        }
+      } catch (err) {
+        console.log('[SMS] Error:', err);
+      }
+    };
+
+    // 2. Start Logic (Don't await tracking setup to avoid blocking SMS)
+    (async () => {
+      try {
+        const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
+        if (bgStatus === 'granted') {
+          await Location.startLocationUpdatesAsync(BACKGROUND_LOCATION_TASK, {
+            accuracy: Location.Accuracy.Balanced,
+            timeInterval: 5000,
+            distanceInterval: 10,
+            showsBackgroundLocationIndicator: true,
+            foregroundService: {
+              notificationTitle: "SOS Active",
+              notificationBody: "Live tracking is running in the background.",
+              notificationColor: "#FF3B30",
+            }
+          });
+        }
+      } catch (e) {
+        console.log("[SOS] Background tracking skipped:", e.message);
+      }
+    })();
+
+    // 3. One-time initial ping
+    if (userLocation) {
+      fetch(`${BACKEND_URL}/update-location`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'ngrok-skip-browser-warning': 'true'
+        },
+        body: JSON.stringify({
+          emergencyId,
+          lat: userLocation.latitude,
+          lng: userLocation.longitude,
+          timestamp: Date.now(),
+          startedFrom: routeStart,
+          destination: routeEnd
+        })
+      }).catch(e => console.log('[SOS] Init Ping error:', e.message));
+    }
+
+    // 4. Trigger SMS & Dialer
+    await handleSms();
+
+    if (isPolice || !isAllowed) { // If police, or if SMS handled by alert
+       if (isPolice) {
+          const phoneUrl = `tel:${primaryPhone}`;
+          Linking.openURL(phoneUrl);
+       }
     }
   };
 
@@ -685,14 +884,43 @@ export default function App() {
     }
 
     lastNavigationRefreshLocationRef.current = null;
-    setUserLocation({
+    const updatedLocation = {
       ...nextCoord,
       accuracy: userLocation.accuracy,
       altitude: userLocation.altitude,
       altitudeAccuracy: userLocation.altitudeAccuracy,
       heading: userLocation.heading,
       speed: userLocation.speed,
-    });
+    };
+    setUserLocation(updatedLocation);
+
+    // Sync simulated movement to live tracker dashboard
+    (async () => {
+      try {
+        const emergencyId = await AsyncStorage.getItem('active_emergency_id');
+        if (emergencyId) {
+          const routeStart = await AsyncStorage.getItem('sos_route_start');
+          const routeEnd = await AsyncStorage.getItem('sos_route_end');
+          await fetch(`${BACKEND_URL}/update-location`, {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'ngrok-skip-browser-warning': 'true'
+            },
+            body: JSON.stringify({
+              emergencyId,
+              lat: updatedLocation.latitude,
+              lng: updatedLocation.longitude,
+              timestamp: Date.now(),
+              startedFrom: routeStart,
+              destination: routeEnd
+            })
+          });
+        }
+      } catch (e) {
+        console.log('Simulated location sync error:', e);
+      }
+    })();
   };
 
   const handleSubmitReport = async () => {
@@ -887,7 +1115,7 @@ export default function App() {
     const realScore = route ? route.safetyScore : 0; 
 
     if (index === 0) return { color: '#00FF94', score: realScore, label: '🛡️ MAXIMUM SAFETY' };
-    if (index === 1) return { color: '#3498db', score: realScore, label: '🛣️ BALANCED' };
+    if (index === 1) return { color: '#FF9500', score: realScore, label: '🛣️ BALANCED' };
     return { color: '#FF3B30', score: realScore, label: '⚠️ HIGH RISK' };
   };
 
@@ -924,9 +1152,12 @@ export default function App() {
             <Polyline
               key="active-navigation-route"
               coordinates={navigationRoute.coords}
-              strokeColor={activeTheme.color}
+              strokeColor={hexToRgba(activeTheme.color, 1)}
               strokeWidth={8}
               zIndex={1000}
+              lineJoin="round"
+              lineCap="round"
+              lineDashPattern={[0]}
             />
             {navigationRoute.dangerZones?.map((zoneCoord, zIndex) => (
               <Marker 
@@ -977,11 +1208,14 @@ export default function App() {
                 <Polyline 
                   key={`route-${index}`}
                   coordinates={route.coords} 
-                  strokeColor={isFocused ? pathTheme.color : `${pathTheme.color}33`} 
+                  strokeColor={isFocused ? hexToRgba(pathTheme.color, 1) : hexToRgba(pathTheme.color, 0.2)} 
                   strokeWidth={isFocused ? 8 : 4}
                   zIndex={isFocused ? 1000 : 10 - index}
                   tappable={true}
                   onPress={() => setSelectedRouteIndex(index)}
+                  lineJoin="round"
+                  lineCap="round"
+                  lineDashPattern={[0]}
                 />
               );
             })}
@@ -1505,8 +1739,11 @@ export default function App() {
                   >
                     <Polyline
                       coordinates={selectedTripForReport.coords}
-                      strokeColor={activeTheme.color}
+                      strokeColor={hexToRgba(activeTheme.color, 1)}
                       strokeWidth={5}
+                      lineJoin="round"
+                      lineCap="round"
+                      lineDashPattern={[0]}
                     />
                     <Marker coordinate={selectedTripForReport.coords[0]}>
                       <View style={styles.dotStart} />

@@ -604,15 +604,21 @@ export default function App() {
       console.log("Could not start background tracking:", e);
     }
 
-    // 3. Draft the SMS
-    const trackingLink = `${BACKEND_URL}/live/${emergencyId}`;
-    const smsMessage = `SOS! I am in a critical situation.\n\nTrack my live location here:\n${trackingLink}`;
-
     console.log(`\n=================================\n👉 LIVE TRACKING LINK: ${trackingLink}\n=================================\n`);
 
     const isAvailable = await SMS.isAvailableAsync();
+    console.log(`[SMS] isAvailable: ${isAvailable}, Contacts: ${JSON.stringify(contacts)}`);
+
     if (isAvailable && !isPolice) {
-      await SMS.sendSMSAsync(contacts, smsMessage);
+      // Small timeout to let UI settle/modal close on iOS
+      setTimeout(async () => {
+        try {
+          const { result } = await SMS.sendSMSAsync(contacts, smsMessage);
+          console.log(`[SMS] Result: ${result}`);
+        } catch (e) {
+          console.error('[SMS] Send Error:', e);
+        }
+      }, 600);
     } else {
       Alert.alert(
         'SOS generated',

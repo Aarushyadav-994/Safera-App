@@ -20,7 +20,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const debuggerHost = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost;
 const hostIp = debuggerHost ? debuggerHost.split(':')[0] : '192.168.1.15';
-const BACKEND_URL = Platform.OS === 'android' && !debuggerHost ? 'http://10.0.2.2:3000' : `http://${hostIp}:3000`;
+
+// PUBLIC NGROK URL FOR REMOTE ACCESS & iOS SECURITY COMPATIBILITY
+const NGROK_URL = 'https://harborous-shela-sustainingly.ngrok-free.dev';
+const BACKEND_URL = NGROK_URL; // Using ngrok for all devices to ensure HTTPS/Remote access
 
 const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 

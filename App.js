@@ -536,12 +536,20 @@ export default function App() {
 
   const triggerSos = async (target) => {
     const isPolice = target === 'police';
-    const phoneNumber = isPolice ? '112' : user?.emergencyContact1;
+    const contacts = [];
+    if (isPolice) {
+      contacts.push('112');
+    } else {
+      if (user?.emergencyContact1) contacts.push(user.emergencyContact1);
+      if (user?.emergencyContact2) contacts.push(user.emergencyContact2);
+    }
 
-    if (!phoneNumber) {
+    if (contacts.length === 0) {
       Alert.alert('SOS unavailable', 'No emergency contact is saved in the profile yet.');
       return;
     }
+
+    const primaryPhone = contacts[0];
 
     const targetLabel = isPolice ? 'Police' : 'Emergency Contact';
     setIsSosOpen(false);
@@ -559,6 +567,8 @@ export default function App() {
     }
 
     // IMMEDIATELY PING SERVER ONCE (Crucial for stationary testing)
+    console.log(`[SOS] Starting tracking. Backend: ${BACKEND_URL}, ID: ${emergencyId}`);
+    
     if (userLocation) {
       fetch(`${BACKEND_URL}/update-location`, {
         method: 'POST',
@@ -602,21 +612,21 @@ export default function App() {
 
     const isAvailable = await SMS.isAvailableAsync();
     if (isAvailable && !isPolice) {
-      await SMS.sendSMSAsync([phoneNumber], smsMessage);
+      await SMS.sendSMSAsync(contacts, smsMessage);
     } else {
       Alert.alert(
         'SOS generated',
-        `${targetLabel} notified via link.\n\nCOPY LINK:\n${trackingLink}\n\nDialing ${phoneNumber}...`
+        `${targetLabel} notified via link.\n\nCOPY LINK:\n${trackingLink}\n\nDialing ${primaryPhone}...`
       );
     }
 
     // 4. Dial the number
-    const phoneUrl = `tel:${phoneNumber}`;
+    const phoneUrl = `tel:${primaryPhone}`;
     const canCall = await Linking.canOpenURL(phoneUrl);
     if (canCall) {
       await Linking.openURL(phoneUrl);
     } else {
-      Alert.alert('Call unavailable', `Could not open the dialer for ${phoneNumber}.`);
+      Alert.alert('Call unavailable', `Could not open the dialer for ${primaryPhone}.`);
     }
   };
 

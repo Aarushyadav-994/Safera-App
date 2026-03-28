@@ -70,7 +70,7 @@ node server.js
 
 ## CONTRIBUTORS
 •  **Aarush Yadav**
-•  **Paavni Bansal**
+•  **Paavni Bansal** (Team Leader)
 •  **Devansh Rana**
 
 ---

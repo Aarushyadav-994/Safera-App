@@ -1137,6 +1137,9 @@ export default function App() {
               strokeColor={hexToRgba(activeTheme.color, 1)}
               strokeWidth={8}
               zIndex={1000}
+              lineJoin="round"
+              lineCap="round"
+              lineDashPattern={[0]}
             />
             {navigationRoute.dangerZones?.map((zoneCoord, zIndex) => (
               <Marker 
@@ -1192,6 +1195,9 @@ export default function App() {
                   zIndex={isFocused ? 1000 : 10 - index}
                   tappable={true}
                   onPress={() => setSelectedRouteIndex(index)}
+                  lineJoin="round"
+                  lineCap="round"
+                  lineDashPattern={[0]}
                 />
               );
             })}
@@ -1717,6 +1723,9 @@ export default function App() {
                       coordinates={selectedTripForReport.coords}
                       strokeColor={hexToRgba(activeTheme.color, 1)}
                       strokeWidth={5}
+                      lineJoin="round"
+                      lineCap="round"
+                      lineDashPattern={[0]}
                     />
                     <Marker coordinate={selectedTripForReport.coords[0]}>
                       <View style={styles.dotStart} />

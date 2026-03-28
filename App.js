@@ -37,7 +37,7 @@ TaskManager.defineTask(BACKGROUND_LOCATION_TASK, async ({ data, error }) => {
       const routeStart = await AsyncStorage.getItem('sos_route_start');
       const routeEnd = await AsyncStorage.getItem('sos_route_end');
       if (emergencyId) {
-        await fetch('${BACKEND_URL}/update-location', {
+        await fetch(`${BACKEND_URL}/update-location`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -560,7 +560,7 @@ export default function App() {
 
     // IMMEDIATELY PING SERVER ONCE (Crucial for stationary testing)
     if (userLocation) {
-      fetch('${BACKEND_URL}/update-location', {
+      fetch(`${BACKEND_URL}/update-location`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -824,7 +824,7 @@ export default function App() {
         if (emergencyId) {
           const routeStart = await AsyncStorage.getItem('sos_route_start');
           const routeEnd = await AsyncStorage.getItem('sos_route_end');
-          await fetch('${BACKEND_URL}/update-location', {
+          await fetch(`${BACKEND_URL}/update-location`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

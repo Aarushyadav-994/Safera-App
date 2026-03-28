@@ -13,9 +13,7 @@ app.use(express.json());
 // Map: emergencyId => { lat, lng, timestamp, startedFrom, destination }
 const activeEmergencies = new Map();
 
-// ---------------------------------------------------------
-// 1. API: Accept Location Updates from the Mobile App
-// ---------------------------------------------------------
+// API: Accept Location Updates
 app.post('/update-location', (req, res) => {
   const { emergencyId, lat, lng, startedFrom, destination, timestamp } = req.body;
 

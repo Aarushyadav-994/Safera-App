@@ -27,10 +27,7 @@ const BACKEND_URL = NGROK_URL; // Using ngrok for all devices to ensure HTTPS/Re
 
 const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 
-/**
- * Converts hex color strings to rgba format for better cross-platform compatibility.
- * Especially critical for iOS which can fail to parse 8-digit hex (#RRGGBBAA).
- */
+// Helper for cross-platform color support
 const hexToRgba = (hex, alpha = 1) => {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);

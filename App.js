@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { calculateSafetyScore } from './SafetyEngine';
+import { calculateSafetyScore, safeComputeRouteScore } from './SafetyEngine';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
   Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert, Platform, Clipboard
@@ -192,7 +192,25 @@ export default function App() {
   const [startText, setStartText] = useState('My Location');
   const [endText, setEndText] = useState('DTU Delhi');
   const [allRoutes, setAllRoutes] = useState([]); 
+  const [routeScores, setRouteScores] = useState([]);
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
+
+  // DECOUPLED SCORING EFFECT
+  // Generates real-time math metrics only when local route payloads settle stably.
+  useEffect(() => {
+    if (!allRoutes || allRoutes.length === 0) {
+      setRouteScores([]);
+      return;
+    }
+
+    const computed = allRoutes.map((route, index) => {
+      console.log(`\n--- App.js Routing Pass [${index}] ---`);
+      if (route && route.coords) console.log(`Route length:`, route.coords.length);
+      return safeComputeRouteScore(route, index);
+    });
+
+    setRouteScores(computed);
+  }, [allRoutes]);
   const [loading, setLoading] = useState(false);
   const [markers, setMarkers] = useState(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -358,7 +376,7 @@ export default function App() {
           nextRoute.dangerZones = snapToPolyline(originalRoute?.dangerZones, nextRoute.coords);
           nextRoute.lowLightingZones = snapToPolyline(originalRoute?.lowLightingZones, nextRoute.coords);
           nextRoute.isolatedZones = snapToPolyline(originalRoute?.isolatedZones, nextRoute.coords);
-          nextRoute.safetyScore = originalRoute?.safetyScore || 0;
+          nextRoute.safetyScore = routeScores[selectedRouteIndex]?.score || 0;
           setNavigationRoute(nextRoute);
           lastNavigationRefreshLocationRef.current = userLocation;
         }
@@ -475,6 +493,11 @@ export default function App() {
       // tierIndex 0 = Longest (Safe), 1 = Balanced, 2 = Shortest (Risky)
       const tierIndex = uniqueDistances.indexOf(roundedDist); 
       
+      // VALIDATE ROUTE DATA: Prevents fatal index crashes or dividing by zero
+      if (!route || !route.coords || route.coords.length === 0) {
+        return { ...route, dangerZones: [], lowLightingZones: [], isolatedZones: [] };
+      }
+
       // Create the deterministic seed based on GPS
       const midCoord = route.coords[Math.floor(route.coords.length / 2)];
       const seedStr = `${midCoord.latitude.toFixed(3)}-${midCoord.longitude.toFixed(3)}-${tierIndex}`;
@@ -484,8 +507,7 @@ export default function App() {
       }
       const seed = Math.abs(hash % 10000) / 10000; 
 
-      // CALLING YOUR FORMULA ENGINE
-      const score = calculateSafetyScore(tierIndex, seed);
+      // Route evaluation has been fully decoupled to a React useEffect cycle.
       
       // Generate Danger Zones based on tierIndex
       let numDangerZones = tierIndex === 0 ? Math.floor(seed * 2) : 
@@ -514,11 +536,11 @@ export default function App() {
         }
       }
 
-      return { ...route, safetyScore: score, dangerZones, lowLightingZones, isolatedZones };
+      return { ...route, dangerZones, lowLightingZones, isolatedZones };
     });
 
-    // Finally, sort by safetyScore so the UI always defaults to the Green route
-    processedRoutes.sort((a, b) => b.safetyScore - a.safetyScore);
+    // UI default sorting is preserved via distance rather than raw scores before the effect fires
+    processedRoutes.sort((a, b) => b.distance - a.distance);
     setAllRoutes(processedRoutes);
     setSelectedRouteIndex(0);
     setIsMinimized(true);
@@ -715,7 +737,7 @@ export default function App() {
       liveRoute.dangerZones = originalRoute?.dangerZones || [];
       liveRoute.lowLightingZones = originalRoute?.lowLightingZones || [];
       liveRoute.isolatedZones = originalRoute?.isolatedZones || [];
-      liveRoute.safetyScore = originalRoute?.safetyScore || 0;
+      liveRoute.safetyScore = routeScores[selectedRouteIndex]?.score || 0;
 
       setNavigationRoute(liveRoute);
       setIsNavigating(true);
@@ -778,7 +800,7 @@ export default function App() {
       completedAt: new Date().toISOString(),
       routeIndex: selectedRouteIndex,
       distance: completedTripDistance,
-      safetyScore: selectedRoute?.safetyScore ?? 0,
+      safetyScore: routeScores[selectedRouteIndex]?.score || 0,
       coords: navigationRoute?.coords || selectedRoute?.coords || [],
     };
 
@@ -1108,8 +1130,12 @@ export default function App() {
   };
 
   const getRouteTheme = (index) => {
-    const route = allRoutes[index];
-    const realScore = route ? route.safetyScore : 0; 
+    // GUARD: Ensure the scores are loaded from the decoupled React state before rendering UI
+    if (!routeScores[index]) {
+      return { color: '#888', score: 0, label: '⏱️ ANALYZING...' };
+    }
+    
+    const realScore = routeScores[index].score; 
 
     if (index === 0) return { color: '#00FF94', score: realScore, label: '🛡️ MAXIMUM SAFETY' };
     if (index === 1) return { color: '#FF9500', score: realScore, label: '🛣️ BALANCED' };

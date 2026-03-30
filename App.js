@@ -206,7 +206,14 @@ export default function App() {
     const computed = allRoutes.map((route, index) => {
       console.log(`\n--- App.js Routing Pass [${index}] ---`);
       if (route && route.coords) console.log(`Route length:`, route.coords.length);
-      return safeComputeRouteScore(route, index);
+      
+      const contextMap = {
+        0: { userMode: "highSafety" },
+        1: { userMode: "balanced" },
+        2: { userMode: "fastest" }
+      };
+
+      return safeComputeRouteScore(route, contextMap[index] || {});
     });
 
     setRouteScores(computed);

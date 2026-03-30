@@ -99,8 +99,13 @@ export const computeSafetyMetrics = (latitude, longitude) => {
                    (lighting * 0.20) + 
                    (crowd * 0.05);
 
+  // GEO-BASED VARIATION
+  // Simulates spatial variation across sparse data points to prevent identical route metrics natively.
+  const geoVariation = ((Math.sin(latitude * 50) + Math.cos(longitude * 50)) * 0.5);
+  const adjustedScore = rawScore + geoVariation;
+
   // Clamp the score strictly between 0 and 10 and round to 1 decimal place
-  const score = parseFloat(Math.min(10, Math.max(0, rawScore)).toFixed(1));
+  const score = parseFloat(Math.min(10, Math.max(0, adjustedScore)).toFixed(1));
 
   // Determine classification category
   let category = "Balanced";
@@ -141,7 +146,7 @@ export const calculateSafetyScore = (latOrTier, lonOrSeed) => {
  */
 export const safeComputeRouteScore = (route, routeIndex = 0) => {
   try {
-    if (!route || !route.coords || !Array.isArray(route.coords) || route.coords.length === 0) {
+    if (!route || !route.coords || !Array.isArray(route.coords) || route.coords.length < 2) {
       console.warn("Invalid route detected", routeIndex);
       return { score: 5.5, category: "Balanced" };
     }
@@ -155,62 +160,43 @@ export const safeComputeRouteScore = (route, routeIndex = 0) => {
     console.log("Coordinates Sample:", coords[0]);
     console.log("------------------------");
 
-    const sampleCount = 5;
-    const step = Math.max(1, Math.floor(coords.length / sampleCount));
+    let totalRisk = 0;
+    let totalDistance = 0;
 
-    const scores = [];
+    for (let i = 1; i < coords.length; i++) {
+      const prev = coords[i - 1];
+      const curr = coords[i];
 
-    for (let i = 0; i < coords.length; i += step) {
-      const point = coords[i];
+      if (!prev || !curr) continue;
 
-      if (!point || point.latitude == null || point.longitude == null) {
-        continue;
-      }
+      const dx = curr.latitude - prev.latitude;
+      const dy = curr.longitude - prev.longitude;
 
-      const s = calculateSafetyScore(point.latitude, point.longitude);
+      const segmentDistance = Math.sqrt(dx * dx + dy * dy);
 
-      if (!isNaN(s)) {
-        scores.push(s);
-      }
+      const segmentScore = calculateSafetyScore(curr.latitude, curr.longitude);
+
+      if (isNaN(segmentScore)) continue;
+
+      // Convert safety -> risk
+      const segmentRisk = (10 - segmentScore);
+
+      totalRisk += segmentRisk * segmentDistance;
+      totalDistance += segmentDistance;
     }
 
-    if (scores.length === 0) {
+    if (totalDistance === 0) {
       return { score: 5.5, category: "Balanced" };
     }
 
-    const totalScore = scores.reduce((acc, curr) => acc + curr, 0);
-    const avg = totalScore / scores.length;
-    const min = Math.min(...scores);
-    const max = Math.max(...scores);
+    const avgRisk = totalRisk / totalDistance;
+    let finalScore = 10 - avgRisk;
 
-    // COMPOSITE SCORING FORMULA
-    // Punishes routes that have a highly unsafe segment despite a good average, while rewarding peaks.
-    let finalScore = (0.6 * avg) + (0.2 * min) + (0.2 * max);
+    const exposurePenalty = Math.min(2, totalDistance * 20);
+    finalScore -= exposurePenalty;
 
-    // VARIANCE PENALTY: Mathematical differentiation to ensure dynamic route vectors 
-    // never cluster identical scores due to sparse geographic datasets.
-    const variance = scores.reduce((acc, s) => acc + Math.pow(s - avg, 2), 0) / scores.length;
-    finalScore -= (variance * 0.5);
-
-    // DETERMINISTIC ROUTE OFFSET
-    // Breaks uniformity identically overlapping routes ensuring Route 0 is always top
-    const routeBias = routeIndex * 0.4;
-    finalScore -= routeBias;
-
-    // ROUTE DISTANCE EXPOSURE PENALTY
-    // Longer total traversal distances result in more exposure, actively reducing score
-    let totalDistance = 0;
-    for (let i = 1; i < coords.length; i++) {
-      const dx = coords[i].latitude - coords[i - 1].latitude;
-      const dy = coords[i].longitude - coords[i - 1].longitude;
-      totalDistance += Math.sqrt(dx * dx + dy * dy);
-    }
-    const distanceFactor = Math.min(1, totalDistance * 50);
-    finalScore -= (distanceFactor * 1.5);
-
-    // Strict safety clamp bounds
-    const clampedScore = Math.min(10, Math.max(0, finalScore));
-    const score = parseFloat(clampedScore.toFixed(1));
+    finalScore = Math.min(10, Math.max(0, finalScore));
+    const score = parseFloat(finalScore.toFixed(1));
 
     let category = "Balanced";
     if (score >= 7) category = "Safe";

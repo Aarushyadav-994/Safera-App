@@ -1174,7 +1174,7 @@ export default function App() {
           <>
             <Polyline
               key="active-navigation-route"
-              coordinates={navigationRoute.coords}
+              coordinates={navigationRoute.displayCoords || navigationRoute.coords}
               strokeColor={hexToRgba(activeTheme.color, 1)}
               strokeWidth={8}
               zIndex={1000}
@@ -1230,7 +1230,7 @@ export default function App() {
               return (
                 <Polyline 
                   key={`route-${index}`}
-                  coordinates={route.coords} 
+                  coordinates={route.displayCoords || route.coords} 
                   strokeColor={isFocused ? hexToRgba(pathTheme.color, 1) : hexToRgba(pathTheme.color, 0.2)} 
                   strokeWidth={isFocused ? 8 : 4}
                   zIndex={isFocused ? 1000 : 10 - index}

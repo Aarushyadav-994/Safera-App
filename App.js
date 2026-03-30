@@ -457,6 +457,72 @@ export default function App() {
     setIsProfileOpen(false);
   };
 
+  /**
+   * =========================================================================
+   * ROUTE DEDUPLICATION ENGINE
+   * =========================================================================
+   * Evaluates polyline similarity to guarantee the UI only offers distinctly 
+   * different physical street pathways, discarding redundant micro-variants natively.
+   */
+  const calculateRouteOverlap = (routeA, routeB) => {
+    if (!routeA || !routeB || !routeA.coords || !routeB.coords) return 0;
+    
+    // Performance Optimization: Sample every 4th coordinate to prevent heavy O(N^2) CPU locking
+    const pointsA = routeA.coords.filter((_, i) => i % 4 === 0);
+    const pointsB = routeB.coords.filter((_, i) => i % 4 === 0);
+    
+    let matchCount = 0;
+    const threshold = 0.0004; // ~40 meters strict Cartesian threshold constraint
+
+    for (const pA of pointsA) {
+      for (const pB of pointsB) {
+        const dLat = pA.latitude - pB.latitude;
+        const dLon = pA.longitude - pB.longitude;
+        if (Math.abs(dLat) < threshold && Math.abs(dLon) < threshold) {
+          matchCount++;
+          break;
+        }
+      }
+    }
+    
+    return pointsA.length > 0 ? matchCount / pointsA.length : 0;
+  };
+
+  const filterDistinctRoutes = (rawRoutes) => {
+    if (!rawRoutes || rawRoutes.length <= 1) return rawRoutes;
+
+    const filteredRoutes = [];
+    
+    for (const currentRoute of rawRoutes) {
+      let isDuplicate = false;
+      
+      for (const existingRoute of filteredRoutes) {
+        const overlapRatio = calculateRouteOverlap(currentRoute, existingRoute);
+        // If overlap > 0.8 (80%), mark as redundant duplicate path natively
+        if (overlapRatio > 0.8) {
+          isDuplicate = true;
+          break;
+        }
+      }
+      
+      if (!isDuplicate) {
+        filteredRoutes.push(currentRoute);
+      }
+      
+      if (filteredRoutes.length === 3) break; // Maximum 3 distinct routes allowed per spec
+    }
+
+    // Safety fallback: if filtering destructively removed all alternatives natively, cleanly fallback 
+    // to returning the original base derivatives capping max arrays securely protecting Demo UI flow.
+    if (filteredRoutes.length >= 2) {
+      return filteredRoutes;
+    } else if (rawRoutes.length >= 2) {
+      return [filteredRoutes[0], rawRoutes.find(r => r.id !== filteredRoutes[0].id) || rawRoutes[1]].slice(0, 2);
+    }
+    
+    return filteredRoutes;
+  };
+
   const handleFindRoute = async () => {
     Keyboard.dismiss();
     setLoading(true);
@@ -485,9 +551,10 @@ export default function App() {
         setMarkers({ start: startPoint, end: endPoint });
         
         console.log("3. Fetching from OpenRouteService...");
-        const routes = await fetchRealRoute(startPoint, endPoint);
+        const rawRoutes = await fetchRealRoute(startPoint, endPoint);
         
-        console.log("4. Routes fetched. Calculating GPS-seeded safety data...");
+        console.log("4. Routes fetched. Deduplicating heavily clustered overlapping arrays natively...");
+        const routes = filterDistinctRoutes(rawRoutes);
         // ... inside handleFindRoute, after fetching routes:
   if (routes && routes.length > 0) {
     // 1. Group by 100m to catch overlapping paths

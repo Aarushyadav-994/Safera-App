@@ -42,6 +42,10 @@ export const fetchRealRoute = async (start, end) => {
 
       return {
         coords: feature.geometry.coordinates.map(c => ({
+          latitude: c[1],
+          longitude: c[0]
+        })),
+        displayCoords: feature.geometry.coordinates.map(c => ({
           latitude: c[1] + offset, 
           longitude: c[0] + offset
         })),
@@ -71,6 +75,10 @@ export const fetchRouteForProfile = async (start, end, profileIndex) => {
 
     return {
       coords: feature.geometry.coordinates.map((c) => ({
+        latitude: c[1],
+        longitude: c[0]
+      })),
+      displayCoords: feature.geometry.coordinates.map((c) => ({
         latitude: c[1],
         longitude: c[0]
       })),

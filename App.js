@@ -15,6 +15,7 @@ import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports
 
 import * as SMS from 'expo-sms';
 import * as TaskManager from 'expo-task-manager';
+import { Accelerometer } from 'expo-sensors';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -190,6 +191,13 @@ export default function App() {
   // Tracks which route object & index the trail last drew up to.
   // Allows filling ALL intermediate route coords between GPS ticks (no straight-line shortcuts).
   const trailStateRef = useRef({ routeCoords: null, lastIndex: -1 });
+  // ---- SHAKE-TO-SOS REFS ----
+  const lastAccelRef = useRef({ x: 0, y: 0, z: 0 });
+  const shakeCountRef = useRef(0);
+  const shakeWindowStartRef = useRef(null);
+  const shakeCountdownIntervalRef = useRef(null);
+  const accelSubscriptionRef = useRef(null);
+  const sosCountdownActiveRef = useRef(false); // guard against double-trigger
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -251,6 +259,8 @@ export default function App() {
   const [editingReportId, setEditingReportId] = useState(null);
   const [editReportType, setEditReportType] = useState('Unsafe spot');
   const [editReportNote, setEditReportNote] = useState('');
+  // shakeCountdown: null = idle, 3/2/1 = counting down to SOS fire
+  const [shakeCountdown, setShakeCountdown] = useState(null);
   const [profileForm, setProfileForm] = useState({
     profileName: '',
     email: '',
@@ -318,6 +328,87 @@ export default function App() {
       setAuthLoading(false);
     })();
   }, []);
+
+  // ============================================================
+  // SHAKE-TO-SOS ENGINE
+  // Listens to the accelerometer while a user is logged in.
+  // 3+ shakes within 1 second → launches 3s cancellable countdown.
+  // ============================================================
+  useEffect(() => {
+    if (!user) {
+      // Stop listener when user logs out
+      if (accelSubscriptionRef.current) {
+        accelSubscriptionRef.current.remove();
+        accelSubscriptionRef.current = null;
+      }
+      return;
+    }
+
+    const SHAKE_THRESHOLD = 1.5;    // delta G-force to count as a shake event
+    const SHAKE_COUNT_NEEDED = 3;   // number of events needed to trigger
+    const SHAKE_WINDOW_MS = 1000;   // all events must be within this window
+
+    Accelerometer.setUpdateInterval(80); // ~12 samples/sec — responsive but not wasteful
+
+    accelSubscriptionRef.current = Accelerometer.addListener(({ x, y, z }) => {
+      const prev = lastAccelRef.current;
+      const delta = Math.sqrt(
+        Math.pow(x - prev.x, 2) +
+        Math.pow(y - prev.y, 2) +
+        Math.pow(z - prev.z, 2)
+      );
+      lastAccelRef.current = { x, y, z };
+
+      if (delta > SHAKE_THRESHOLD) {
+        const now = Date.now();
+        if (!shakeWindowStartRef.current || now - shakeWindowStartRef.current > SHAKE_WINDOW_MS) {
+          shakeCountRef.current = 1;
+          shakeWindowStartRef.current = now;
+        } else {
+          shakeCountRef.current += 1;
+          if (shakeCountRef.current >= SHAKE_COUNT_NEEDED && !sosCountdownActiveRef.current) {
+            shakeCountRef.current = 0;
+            shakeWindowStartRef.current = null;
+            startSosCountdown();
+          }
+        }
+      }
+    });
+
+    return () => {
+      if (accelSubscriptionRef.current) {
+        accelSubscriptionRef.current.remove();
+        accelSubscriptionRef.current = null;
+      }
+    };
+  }, [user]);
+
+  const startSosCountdown = () => {
+    if (sosCountdownActiveRef.current) return;
+    sosCountdownActiveRef.current = true;
+    let count = 3;
+    setShakeCountdown(count);
+
+    shakeCountdownIntervalRef.current = setInterval(() => {
+      count -= 1;
+      if (count <= 0) {
+        clearInterval(shakeCountdownIntervalRef.current);
+        shakeCountdownIntervalRef.current = null;
+        sosCountdownActiveRef.current = false;
+        setShakeCountdown(null);
+        triggerSos('contacts');
+      } else {
+        setShakeCountdown(count);
+      }
+    }, 1000);
+  };
+
+  const cancelSosCountdown = () => {
+    clearInterval(shakeCountdownIntervalRef.current);
+    shakeCountdownIntervalRef.current = null;
+    sosCountdownActiveRef.current = false;
+    setShakeCountdown(null);
+  };
 
   useEffect(() => {
     if (!isNavigating || !userLocation) {
@@ -1667,6 +1758,24 @@ export default function App() {
         </View>
       </Animated.View>
 
+      {/* ============================================================
+          SHAKE-TO-SOS COUNTDOWN OVERLAY
+          Full-screen urgent overlay that gives 3 seconds to cancel.
+          ============================================================ */}
+      {shakeCountdown !== null && (
+        <View style={styles.shakeCountdownOverlay}>
+          <View style={styles.shakeCountdownCard}>
+            <Text style={styles.shakeCountdownEmoji}>🆘</Text>
+            <Text style={styles.shakeCountdownTitle}>SOS ACTIVATING</Text>
+            <Text style={styles.shakeCountdownTimer}>{shakeCountdown}</Text>
+            <Text style={styles.shakeCountdownHint}>Shake detected. Sending SOS to emergency contacts.</Text>
+            <TouchableOpacity style={styles.shakeCountdownCancelBtn} onPress={cancelSosCountdown}>
+              <Text style={styles.shakeCountdownCancelText}>CANCEL</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       <TouchableOpacity style={styles.sosFab} onPress={() => setIsSosOpen(true)} activeOpacity={0.9}>
         <Ionicons name="warning" size={24} color="#FFF" />
         <Text style={styles.sosFabText}>SOS</Text>
@@ -2326,5 +2435,42 @@ const styles = StyleSheet.create({
   sosOptionTitle: { fontSize: 17, fontWeight: '900' },
   sosOptionSub: { color: '#888', fontSize: 12, marginTop: 4, lineHeight: 18 },
   sosCancelBtn: { alignItems: 'center', justifyContent: 'center', paddingTop: 6, paddingBottom: 8 },
-  sosCancelText: { color: '#888', fontSize: 15, fontWeight: '700' }
+  sosCancelText: { color: '#888', fontSize: 15, fontWeight: '700' },
+  // Shake-to-SOS countdown overlay
+  shakeCountdownOverlay: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(180,0,0,0.88)',
+    justifyContent: 'center', alignItems: 'center',
+    zIndex: 9999,
+  },
+  shakeCountdownCard: {
+    width: width * 0.82,
+    backgroundColor: '#1A0000',
+    borderRadius: 32,
+    padding: 36,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#FF3B30',
+  },
+  shakeCountdownEmoji: { fontSize: 52, marginBottom: 14 },
+  shakeCountdownTitle: {
+    color: '#FF3B30', fontSize: 18, fontWeight: '900',
+    letterSpacing: 3, marginBottom: 20,
+  },
+  shakeCountdownTimer: {
+    color: '#FFF', fontSize: 96, fontWeight: '900',
+    lineHeight: 100, marginBottom: 16,
+  },
+  shakeCountdownHint: {
+    color: '#FF9999', fontSize: 13, textAlign: 'center',
+    lineHeight: 20, marginBottom: 32,
+  },
+  shakeCountdownCancelBtn: {
+    width: '100%', height: 56, borderRadius: 18,
+    borderWidth: 2, borderColor: '#FF3B30',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  shakeCountdownCancelText: {
+    color: '#FFF', fontWeight: '900', fontSize: 16, letterSpacing: 2,
+  },
 });

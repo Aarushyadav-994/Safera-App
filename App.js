@@ -187,6 +187,9 @@ export default function App() {
   // FROZEN ALERT ZONES: Coordinates locked in at navigation start, never mutated.
   // This is the single source of truth for all alert Markers during a navigation session.
   const frozenAlertZonesRef = useRef({ dangerZones: [], lowLightingZones: [], isolatedZones: [] });
+  // Tracks which route object & index the trail last drew up to.
+  // Allows filling ALL intermediate route coords between GPS ticks (no straight-line shortcuts).
+  const trailStateRef = useRef({ routeCoords: null, lastIndex: -1 });
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -228,6 +231,8 @@ export default function App() {
   const [isNavigating, setIsNavigating] = useState(false);
   const [navigationRoute, setNavigationRoute] = useState(null);
   const [navigationLoading, setNavigationLoading] = useState(false);
+  // GPS-accumulated trail: grows with each real position tick. Never resets on reroute.
+  const [visitedGpsTrail, setVisitedGpsTrail] = useState([]);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isSosOpen, setIsSosOpen] = useState(false);
   const [isReportsOpen, setIsReportsOpen] = useState(false);
@@ -820,6 +825,9 @@ export default function App() {
       setNavigationRoute(liveRoute);
       setIsNavigating(true);
       clearArrivalMessage();
+      // Reset trail state — the useEffect will seed on the very first GPS tick.
+      setVisitedGpsTrail([]);
+      trailStateRef.current = { routeCoords: null, lastIndex: -1 };
       lastNavigationRefreshLocationRef.current = userLocation;
       navigationCompletionHandledRef.current = false;
       notifiedDangerZonesRef.current.clear();
@@ -850,6 +858,8 @@ export default function App() {
     setIsNavigating(false);
     setNavigationRoute(null);
     setNavigationLoading(false);
+    setVisitedGpsTrail([]);
+    trailStateRef.current = { routeCoords: null, lastIndex: -1 };
     setShowUnsafeZoneCard(false);
     lastNavigationRefreshLocationRef.current = null;
     navigationFetchInFlightRef.current = false;
@@ -952,6 +962,36 @@ export default function App() {
       }
     });
   }, [isNavigating, userLocation]);
+
+  // 🩶 ROUTE-SNAPPED TRAIL ENGINE
+  // On every GPS tick, finds user's closest index on the route and appends ALL intermediate
+  // route coords since the last index — so the trail follows every road curve, not straight lines.
+  // trailStateRef tracks the current route object identity + last index drawn,
+  // so it resets cleanly when a reroute fetches a new coords array.
+  useEffect(() => {
+    if (!isNavigating || !userLocation || !navigationRoute?.coords?.length) return;
+
+    const coords = navigationRoute.coords;
+    const state = trailStateRef.current;
+    const currentIdx = getClosestCoordIndex(coords, userLocation);
+
+    if (state.routeCoords !== coords) {
+      // New route (nav start or reroute): initialise tracker at current position.
+      trailStateRef.current = { routeCoords: coords, lastIndex: currentIdx };
+      // Append the current route point to keep the trail visually connected.
+      setVisitedGpsTrail(prev => [...prev, coords[currentIdx]]);
+      return;
+    }
+
+    if (currentIdx > state.lastIndex) {
+      // Fill EVERY coord between last drawn index and current index.
+      const newSegment = coords.slice(state.lastIndex + 1, currentIdx + 1);
+      trailStateRef.current = { routeCoords: coords, lastIndex: currentIdx };
+      if (newSegment.length > 0) {
+        setVisitedGpsTrail(prev => [...prev, ...newSegment]);
+      }
+    }
+  }, [isNavigating, userLocation, navigationRoute]);
 
   const handleExitNavigation = () => {
     resetNavigationState();
@@ -1248,6 +1288,7 @@ export default function App() {
       >
         {isNavigating && navigationRoute ? (
           <>
+            {/* FULL active route — always full coords, grey trail paints on top */}
             <Polyline
               key="active-navigation-route"
               coordinates={navigationRoute.displayCoords || navigationRoute.coords}
@@ -1258,13 +1299,27 @@ export default function App() {
               lineCap="round"
               lineDashPattern={[0]}
             />
+            {/* GPS TRAIL: Actual path walked — grows permanently, never collapses on reroute.
+                Painted on top of the colored route (zIndex 1001) to hide covered segments. */}
+            {visitedGpsTrail.length >= 2 && (
+              <Polyline
+                key="nav-trail-visited"
+                coordinates={visitedGpsTrail}
+                strokeColor={isDarkMode ? '#888888' : '#AAAAAA'}
+                strokeWidth={8}
+                zIndex={1001}
+                lineJoin="round"
+                lineCap="round"
+                lineDashPattern={[0]}
+              />
+            )}
             {/* STATIONARY ALERT MARKERS: Always read from frozenAlertZonesRef, never from navigationRoute.
                 Keys are coordinate-based hashes to guarantee React never unmounts/remounts these Markers. */}
             {frozenAlertZonesRef.current.dangerZones.map((zoneCoord, zIndex) => (
               <Marker 
                 key={`nav-danger-${zoneCoord.latitude.toFixed(6)}-${zoneCoord.longitude.toFixed(6)}`} 
                 coordinate={zoneCoord}
-                zIndex={1001}
+                zIndex={1002}
                 tracksViewChanges={false}
                 anchor={{ x: 0.5, y: 0.5 }} 
               >
@@ -1277,7 +1332,7 @@ export default function App() {
               <Marker 
                 key={`nav-light-${zoneCoord.latitude.toFixed(6)}-${zoneCoord.longitude.toFixed(6)}`} 
                 coordinate={zoneCoord}
-                zIndex={1001}
+                zIndex={1002}
                 tracksViewChanges={false}
                 anchor={{ x: 0.5, y: 0.5 }} 
               >
@@ -1290,7 +1345,7 @@ export default function App() {
               <Marker 
                 key={`nav-iso-${zoneCoord.latitude.toFixed(6)}-${zoneCoord.longitude.toFixed(6)}`} 
                 coordinate={zoneCoord}
-                zIndex={1001}
+                zIndex={1002}
                 tracksViewChanges={false}
                 anchor={{ x: 0.5, y: 0.5 }} 
               >

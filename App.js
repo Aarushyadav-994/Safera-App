@@ -184,6 +184,9 @@ export default function App() {
   const notifiedLowLightingZonesRef = useRef(new Set());
   const notifiedIsolatedZonesRef = useRef(new Set());
   const isSimulatingRef = useRef(false);
+  // FROZEN ALERT ZONES: Coordinates locked in at navigation start, never mutated.
+  // This is the single source of truth for all alert Markers during a navigation session.
+  const frozenAlertZonesRef = useRef({ dangerZones: [], lowLightingZones: [], isolatedZones: [] });
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -375,14 +378,9 @@ export default function App() {
         const nextRoute = await fetchRouteForProfile(userLocation, markers.end, selectedRouteIndex);
 
         if (nextRoute) {
-          const originalRoute = allRoutes[selectedRouteIndex];
-          
-          const snapToPolyline = (zones, polylineCoords) => 
-            (zones || []).map(z => getClosestPointOnRoute(polylineCoords, z) || z);
-
-          nextRoute.dangerZones = snapToPolyline(originalRoute?.dangerZones, nextRoute.coords);
-          nextRoute.lowLightingZones = snapToPolyline(originalRoute?.lowLightingZones, nextRoute.coords);
-          nextRoute.isolatedZones = snapToPolyline(originalRoute?.isolatedZones, nextRoute.coords);
+          // CRITICAL: Only update the polyline path + distance.
+          // Alert zone coordinates are FROZEN in frozenAlertZonesRef and must NEVER be re-snapped
+          // or re-assigned here. Re-assigning them causes Markers to unmount/remount and drift.
           nextRoute.safetyScore = routeScores[selectedRouteIndex]?.score || 0;
           setNavigationRoute(nextRoute);
           lastNavigationRefreshLocationRef.current = userLocation;
@@ -808,10 +806,16 @@ export default function App() {
       }
 
       const originalRoute = allRoutes[selectedRouteIndex];
-      liveRoute.dangerZones = originalRoute?.dangerZones || [];
-      liveRoute.lowLightingZones = originalRoute?.lowLightingZones || [];
-      liveRoute.isolatedZones = originalRoute?.isolatedZones || [];
       liveRoute.safetyScore = routeScores[selectedRouteIndex]?.score || 0;
+
+      // FREEZE alert zone coordinates once at navigation start.
+      // These coords will NEVER change for the entire navigation session,
+      // ensuring Markers are always stationary and never drift on reroute.
+      frozenAlertZonesRef.current = {
+        dangerZones: originalRoute?.dangerZones || [],
+        lowLightingZones: originalRoute?.lowLightingZones || [],
+        isolatedZones: originalRoute?.isolatedZones || [],
+      };
 
       setNavigationRoute(liveRoute);
       setIsNavigating(true);
@@ -851,8 +855,10 @@ export default function App() {
     navigationFetchInFlightRef.current = false;
     navigationCompletionHandledRef.current = false;
     notifiedDangerZonesRef.current.clear();
-      notifiedLowLightingZonesRef.current.clear();
-      notifiedIsolatedZonesRef.current.clear();
+    notifiedLowLightingZonesRef.current.clear();
+    notifiedIsolatedZonesRef.current.clear();
+    // Clear the frozen zones so they don't leak into the next session.
+    frozenAlertZonesRef.current = { dangerZones: [], lowLightingZones: [], isolatedZones: [] };
 
     if (currentRoute?.coords?.length) {
       mapRef.current?.fitToCoordinates(currentRoute.coords, {
@@ -914,42 +920,38 @@ export default function App() {
     }
   }, [isNavigating, markers, navigationRoute, userLocation, handleCompleteNavigation]);
 
-  // 🔴 NEW: 200m Proximity Check for Multi-Zones
+  // 🔴 200m Proximity Check — reads from frozenAlertZonesRef (stationary, immutable coords).
   useEffect(() => {
-    if (!isNavigating || !userLocation || !navigationRoute) {
+    if (!isNavigating || !userLocation) {
       return;
     }
 
-    if (navigationRoute.dangerZones) {
-      navigationRoute.dangerZones.forEach((zone, index) => {
-        const distance = getDistanceMeters(userLocation, zone);
-        if (distance <= 200 && !notifiedDangerZonesRef.current.has(index)) {
-          notifiedDangerZonesRef.current.add(index);
-          setShowUnsafeZoneCard(true);
-        }
-      });
-    }
+    const frozen = frozenAlertZonesRef.current;
 
-    if (navigationRoute.lowLightingZones) {
-      navigationRoute.lowLightingZones.forEach((zone, index) => {
-        const distance = getDistanceMeters(userLocation, zone);
-        if (distance <= 200 && !notifiedLowLightingZonesRef.current.has(index)) {
-          notifiedLowLightingZonesRef.current.add(index);
-          setShowLowLightingCard(true);
-        }
-      });
-    }
+    frozen.dangerZones.forEach((zone, index) => {
+      const distance = getDistanceMeters(userLocation, zone);
+      if (distance <= 200 && !notifiedDangerZonesRef.current.has(index)) {
+        notifiedDangerZonesRef.current.add(index);
+        setShowUnsafeZoneCard(true);
+      }
+    });
 
-    if (navigationRoute.isolatedZones) {
-      navigationRoute.isolatedZones.forEach((zone, index) => {
-        const distance = getDistanceMeters(userLocation, zone);
-        if (distance <= 200 && !notifiedIsolatedZonesRef.current.has(index)) {
-          notifiedIsolatedZonesRef.current.add(index);
-          setShowIsolatedCard(true);
-        }
-      });
-    }
-  }, [isNavigating, navigationRoute, userLocation]);
+    frozen.lowLightingZones.forEach((zone, index) => {
+      const distance = getDistanceMeters(userLocation, zone);
+      if (distance <= 200 && !notifiedLowLightingZonesRef.current.has(index)) {
+        notifiedLowLightingZonesRef.current.add(index);
+        setShowLowLightingCard(true);
+      }
+    });
+
+    frozen.isolatedZones.forEach((zone, index) => {
+      const distance = getDistanceMeters(userLocation, zone);
+      if (distance <= 200 && !notifiedIsolatedZonesRef.current.has(index)) {
+        notifiedIsolatedZonesRef.current.add(index);
+        setShowIsolatedCard(true);
+      }
+    });
+  }, [isNavigating, userLocation]);
 
   const handleExitNavigation = () => {
     resetNavigationState();
@@ -1256,9 +1258,11 @@ export default function App() {
               lineCap="round"
               lineDashPattern={[0]}
             />
-            {navigationRoute.dangerZones?.map((zoneCoord, zIndex) => (
+            {/* STATIONARY ALERT MARKERS: Always read from frozenAlertZonesRef, never from navigationRoute.
+                Keys are coordinate-based hashes to guarantee React never unmounts/remounts these Markers. */}
+            {frozenAlertZonesRef.current.dangerZones.map((zoneCoord, zIndex) => (
               <Marker 
-                key={`nav-danger-${zIndex}`} 
+                key={`nav-danger-${zoneCoord.latitude.toFixed(6)}-${zoneCoord.longitude.toFixed(6)}`} 
                 coordinate={zoneCoord}
                 zIndex={1001}
                 tracksViewChanges={false}
@@ -1269,9 +1273,9 @@ export default function App() {
                 </View>
               </Marker>
             ))}
-            {navigationRoute.lowLightingZones?.map((zoneCoord, zIndex) => (
+            {frozenAlertZonesRef.current.lowLightingZones.map((zoneCoord, zIndex) => (
               <Marker 
-                key={`nav-light-${zIndex}`} 
+                key={`nav-light-${zoneCoord.latitude.toFixed(6)}-${zoneCoord.longitude.toFixed(6)}`} 
                 coordinate={zoneCoord}
                 zIndex={1001}
                 tracksViewChanges={false}
@@ -1282,9 +1286,9 @@ export default function App() {
                 </View>
               </Marker>
             ))}
-            {navigationRoute.isolatedZones?.map((zoneCoord, zIndex) => (
+            {frozenAlertZonesRef.current.isolatedZones.map((zoneCoord, zIndex) => (
               <Marker 
-                key={`nav-iso-${zIndex}`} 
+                key={`nav-iso-${zoneCoord.latitude.toFixed(6)}-${zoneCoord.longitude.toFixed(6)}`} 
                 coordinate={zoneCoord}
                 zIndex={1001}
                 tracksViewChanges={false}

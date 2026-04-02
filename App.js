@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { calculateSafetyScore, safeComputeRouteScore } from './SafetyEngine';
 import { 
   StyleSheet, View, Text, TextInput, TouchableOpacity, 
-  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert, Platform, Clipboard
+  Dimensions, ActivityIndicator, Keyboard, StatusBar, ScrollView, Animated, Modal, Linking, Alert, Platform, Clipboard, Vibration
 } from 'react-native';
 import MapView, { Marker, Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import * as Location from 'expo-location';
@@ -16,6 +16,7 @@ import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports
 import * as SMS from 'expo-sms';
 import * as TaskManager from 'expo-task-manager';
 import { Accelerometer } from 'expo-sensors';
+import { Audio } from 'expo-av';
 import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -198,6 +199,10 @@ export default function App() {
   const shakeCountdownIntervalRef = useRef(null);
   const accelSubscriptionRef = useRef(null);
   const sosCountdownActiveRef = useRef(false); // guard against double-trigger
+  // ---- FAKE CALL REFS ----
+  const fakeCallTimerRef = useRef(null);
+  const ringtoneRef = useRef(null); // expo-av Sound object
+  const pulseAnim = useRef(new Animated.Value(0)).current; // incoming call ring pulse
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -261,6 +266,9 @@ export default function App() {
   const [editReportNote, setEditReportNote] = useState('');
   // shakeCountdown: null = idle, 3/2/1 = counting down to SOS fire
   const [shakeCountdown, setShakeCountdown] = useState(null);
+  // fakeCallPhase: null | 'incoming' | 'active'
+  const [fakeCallPhase, setFakeCallPhase] = useState(null);
+  const [fakeCallSeconds, setFakeCallSeconds] = useState(0);
   const [profileForm, setProfileForm] = useState({
     profileName: '',
     email: '',
@@ -409,6 +417,72 @@ export default function App() {
     sosCountdownActiveRef.current = false;
     setShakeCountdown(null);
   };
+
+  // ============================================================
+  // FAKE CALL ENGINE — expo-av ringtone + iOS UI
+  // ============================================================
+  const startFakeCall = async () => {
+    setIsSosOpen(false);
+    try {
+      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, staysActiveInBackground: false });
+      const { sound } = await Audio.Sound.createAsync(
+        require('./assets/ringtone.mp3'),
+        { shouldPlay: true, isLooping: true, volume: 1.0 }
+      );
+      ringtoneRef.current = sound;
+    } catch (e) {
+      // Fallback: silent if audio fails — UI still works
+      console.log('[FakeCall] Audio failed:', e.message);
+    }
+    setTimeout(() => setFakeCallPhase('incoming'), 1200);
+  };
+
+
+  const answerFakeCall = async () => {
+    if (ringtoneRef.current) {
+      await ringtoneRef.current.stopAsync();
+      await ringtoneRef.current.unloadAsync();
+      ringtoneRef.current = null;
+    }
+    setFakeCallPhase('active');
+    setFakeCallSeconds(0);
+    fakeCallTimerRef.current = setInterval(() => {
+      setFakeCallSeconds(prev => prev + 1);
+    }, 1000);
+  };
+
+  const endFakeCall = async () => {
+    if (ringtoneRef.current) {
+      await ringtoneRef.current.stopAsync();
+      await ringtoneRef.current.unloadAsync();
+      ringtoneRef.current = null;
+    }
+    clearInterval(fakeCallTimerRef.current);
+    fakeCallTimerRef.current = null;
+    setFakeCallPhase(null);
+    setFakeCallSeconds(0);
+  };
+
+  const formatCallTime = (seconds) => {
+    const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+    const s = (seconds % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
+  };
+
+  // Pulse ring animation — runs only during incoming phase
+  useEffect(() => {
+    if (fakeCallPhase === 'incoming') {
+      Animated.loop(
+        Animated.sequence([
+          Animated.timing(pulseAnim, { toValue: 1, duration: 1300, useNativeDriver: true }),
+          Animated.timing(pulseAnim, { toValue: 0, duration: 0, useNativeDriver: true }),
+        ])
+      ).start();
+    } else {
+      pulseAnim.stopAnimation();
+      pulseAnim.setValue(0);
+    }
+  }, [fakeCallPhase]);
 
   useEffect(() => {
     if (!isNavigating || !userLocation) {
@@ -2198,12 +2272,131 @@ export default function App() {
               </View>
             </TouchableOpacity>
 
+            <TouchableOpacity style={styles.sosOption} onPress={startFakeCall}>
+              <View style={[styles.sosIconWrap, { backgroundColor: '#1A1A2E' }]}>
+                <Ionicons name="call" size={22} color="#5E9EFF" />
+              </View>
+              <View style={styles.sosOptionText}>
+                <Text style={[styles.sosOptionTitle, { color: UI_TEXT }]}>Fake a Call</Text>
+                <Text style={styles.sosOptionSub}>Trigger a realistic fake incoming call to exit an unsafe situation discreetly.</Text>
+              </View>
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.sosCancelBtn} onPress={() => setIsSosOpen(false)}>
               <Text style={styles.sosCancelText}>Cancel</Text>
             </TouchableOpacity>
           </View>
         </View>
       </Modal>
+
+      {/* ================================================================
+          FAKE CALL — iOS 17 INCOMING CALL SCREEN
+          ================================================================ */}
+      {fakeCallPhase === 'incoming' && (
+        <View style={styles.iosCallBg}>
+          <StatusBar barStyle="light-content" />
+
+          {/* Top info */}
+          <View style={styles.iosCallTopInfo}>
+            <Text style={styles.iosCallIncomingLabel}>INCOMING CALL</Text>
+
+            {/* Animated pulse ring behind avatar */}
+            <View style={styles.iosCallAvatarWrap}>
+              <Animated.View style={[
+                styles.iosCallPulseRing,
+                {
+                  transform: [{ scale: pulseAnim.interpolate({ inputRange: [0,1], outputRange: [1, 1.55] }) }],
+                  opacity: pulseAnim.interpolate({ inputRange: [0, 0.6, 1], outputRange: [0.45, 0.15, 0] }),
+                }
+              ]} />
+              <View style={styles.iosCallAvatar}>
+                <Text style={styles.iosCallAvatarText}>M</Text>
+              </View>
+            </View>
+
+            <Text style={styles.iosCallName}>Mom</Text>
+            <Text style={styles.iosCallSub}>mobile</Text>
+          </View>
+
+          {/* Quick actions */}
+          <View style={styles.iosCallQuickRow}>
+            <View style={styles.iosCallQuickBtn}>
+              <View style={styles.iosCallQuickIcon}>
+                <Ionicons name="alarm" size={22} color="#FFF" />
+              </View>
+              <Text style={styles.iosCallQuickLabel}>Remind Me</Text>
+            </View>
+            <View style={styles.iosCallQuickBtn}>
+              <View style={styles.iosCallQuickIcon}>
+                <Ionicons name="chatbubble" size={22} color="#FFF" />
+              </View>
+              <Text style={styles.iosCallQuickLabel}>Message</Text>
+            </View>
+          </View>
+
+          {/* Decline / Accept */}
+          <View style={styles.iosCallActionRow}>
+            <View style={styles.iosCallActionWrap}>
+              <TouchableOpacity style={styles.iosCallDecline} onPress={endFakeCall}>
+                <Ionicons name="call" size={32} color="#FFF" style={{ transform: [{ rotate: '135deg' }] }} />
+              </TouchableOpacity>
+              <Text style={styles.iosCallActionLabel}>Decline</Text>
+            </View>
+            <View style={styles.iosCallActionWrap}>
+              <TouchableOpacity style={styles.iosCallAccept} onPress={answerFakeCall}>
+                <Ionicons name="call" size={32} color="#FFF" />
+              </TouchableOpacity>
+              <Text style={styles.iosCallActionLabel}>Accept</Text>
+            </View>
+          </View>
+        </View>
+      )}
+
+      {/* ================================================================
+          FAKE CALL — iOS 17 ACTIVE CALL SCREEN
+          ================================================================ */}
+      {fakeCallPhase === 'active' && (
+        <View style={styles.iosCallBg}>
+          <StatusBar barStyle="light-content" />
+
+          <View style={styles.iosCallTopInfo}>
+            {/* Mini avatar */}
+            <View style={styles.iosCallMiniAvatar}>
+              <Text style={styles.iosCallMiniAvatarText}>M</Text>
+            </View>
+            <Text style={styles.iosCallName}>Mom</Text>
+            {/* Green connected dot + timer */}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
+              <View style={styles.iosCallConnectedDot} />
+              <Text style={styles.iosCallTimer}>{formatCallTime(fakeCallSeconds)}</Text>
+            </View>
+          </View>
+
+          {/* 2×3 control grid — iOS style */}
+          <View style={styles.iosCallGrid}>
+            {[
+              { icon: 'mic-off',     label: 'mute'     },
+              { icon: 'keypad',      label: 'keypad'   },
+              { icon: 'volume-high', label: 'audio'    },
+              { icon: 'add',         label: 'add call' },
+              { icon: 'pause',       label: 'hold'     },
+              { icon: 'videocam',    label: 'FaceTime' },
+            ].map((btn) => (
+              <View key={btn.label} style={styles.iosCallCtrl}>
+                <View style={styles.iosCallCtrlIcon}>
+                  <Ionicons name={btn.icon} size={26} color="#FFF" />
+                </View>
+                <Text style={styles.iosCallCtrlLabel}>{btn.label}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* End call */}
+          <TouchableOpacity style={styles.iosCallEndBtn} onPress={endFakeCall}>
+            <Ionicons name="call" size={34} color="#FFF" style={{ transform: [{ rotate: '135deg' }] }} />
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 }
@@ -2472,5 +2665,170 @@ const styles = StyleSheet.create({
   },
   shakeCountdownCancelText: {
     color: '#FFF', fontWeight: '900', fontSize: 16, letterSpacing: 2,
+  },
+  // iOS 17 Fake Call screens
+  iosCallBg: {
+    position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: '#1A3A2A', // deep green tint — iOS contacts default
+    zIndex: 99999,
+    justifyContent: 'space-between',
+    paddingTop: 60,
+    paddingBottom: 50,
+    alignItems: 'center',
+  },
+  iosCallTopInfo: {
+    alignItems: 'center',
+    marginTop: 20,
+  },
+  iosCallIncomingLabel: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 24,
+    letterSpacing: 0.3,
+  },
+  iosCallAvatar: {
+    width: 100, height: 100, borderRadius: 50,
+    backgroundColor: '#2E7D52',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 3,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+  // Wrapper: bigger than avatar so the ring has room to show outside the avatar
+  iosCallAvatarWrap: {
+    width: 140, height: 140,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 18,
+  },
+  // Ring fills the entire wrapper via inset 0 — perfectly centered behind the 100px avatar
+  iosCallPulseRing: {
+    position: 'absolute',
+    top: 0, left: 0, right: 0, bottom: 0,
+    borderRadius: 70,
+    borderWidth: 3,
+    borderColor: 'rgba(46,125,82,0.85)',
+    backgroundColor: 'transparent',
+  },
+  // Mini avatar for active call screen
+  iosCallMiniAvatar: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: '#2E7D52',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  iosCallMiniAvatarText: {
+    color: '#FFF',
+    fontSize: 24,
+    fontWeight: '600',
+  },
+  // Green dot for "connected" status
+  iosCallConnectedDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: '#34C759',
+  },
+  iosCallAvatarText: {
+    color: '#FFF',
+    fontSize: 44,
+    fontWeight: '600',
+  },
+  iosCallName: {
+    color: '#FFFFFF',
+    fontSize: 38,
+    fontWeight: '600',
+    marginBottom: 6,
+    letterSpacing: -0.5,
+  },
+  iosCallSub: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 16,
+    fontWeight: '400',
+  },
+  iosCallTimer: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 17,
+    fontWeight: '400',
+    letterSpacing: 1,
+  },
+  iosCallQuickRow: {
+    flexDirection: 'row',
+    gap: 60,
+    marginBottom: 10,
+  },
+  iosCallQuickBtn: {
+    alignItems: 'center',
+    gap: 8,
+  },
+  iosCallQuickIcon: {
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iosCallQuickLabel: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  iosCallActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+    paddingHorizontal: 52,
+  },
+  iosCallActionWrap: {
+    alignItems: 'center',
+    gap: 12,
+  },
+  iosCallDecline: {
+    width: 78, height: 78, borderRadius: 39,
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iosCallAccept: {
+    width: 78, height: 78, borderRadius: 39,
+    backgroundColor: '#34C759',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iosCallActionLabel: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  iosCallGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    width: width,
+    paddingHorizontal: 36,
+    justifyContent: 'space-between',
+    rowGap: 20,
+  },
+  iosCallCtrl: {
+    width: '30%',
+    alignItems: 'center',
+    gap: 8,
+  },
+  iosCallCtrlIcon: {
+    width: 72, height: 72, borderRadius: 36,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  iosCallCtrlLabel: {
+    color: 'rgba(255,255,255,0.75)',
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  iosCallEndBtn: {
+    width: 78, height: 78, borderRadius: 39,
+    backgroundColor: '#FF3B30',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

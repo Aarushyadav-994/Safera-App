@@ -133,4 +133,3 @@ export async function deleteAccount(userId) {
   await writeUsers(filtered);
   await AsyncStorage.removeItem(SESSION_STORAGE_KEY);
 }
-

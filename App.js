@@ -225,14 +225,10 @@ export default function App() {
     const computed = allRoutes.map((route, index) => {
       console.log(`\n--- App.js Routing Pass [${index}] ---`);
       if (route && route.coords) console.log(`Route length:`, route.coords.length);
-      
-      const contextMap = {
-        0: { userMode: "highSafety" },
-        1: { userMode: "balanced" },
-        2: { userMode: "fastest" }
-      };
 
-      return safeComputeRouteScore(route, contextMap[index] || {});
+      // All routes scored with the same neutral context — no index-based bias.
+      // The P20 location scores alone determine which route is safest.
+      return safeComputeRouteScore(route, { userMode: 'balanced' });
     });
 
     setRouteScores(computed);

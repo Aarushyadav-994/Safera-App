@@ -285,10 +285,6 @@ export const evaluateRoute = (routePoints, context = {}) => {
   const bottleneckPenalty = Math.pow(severity, 2) * 1.5;
   finalScore -= bottleneckPenalty;
 
-  // Preserve user mode behaviour
-  if (context.userMode === 'highSafety') finalScore += 0.4;
-  else if (context.userMode === 'fastest') finalScore -= 0.4;
-
   const score = parseFloat(Math.min(10, Math.max(0, finalScore)).toFixed(1));
 
   let category = 'Balanced';

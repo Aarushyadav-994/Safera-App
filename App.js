@@ -23,13 +23,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 const debuggerHost = Constants.expoConfig?.hostUri || Constants.manifest2?.extra?.expoGo?.debuggerHost;
 const hostIp = debuggerHost ? debuggerHost.split(':')[0] : '192.168.1.15';
 
-// PUBLIC NGROK URL FOR REMOTE ACCESS & iOS SECURITY COMPATIBILITY
 const NGROK_URL = 'https://harborous-shela-sustainingly.ngrok-free.dev';
-const BACKEND_URL = NGROK_URL; // Using ngrok for all devices to ensure HTTPS/Remote access
+const BACKEND_URL = NGROK_URL;
 
 const BACKGROUND_LOCATION_TASK = 'BACKGROUND_LOCATION_TASK';
 
-// Helper for cross-platform color support
 const hexToRgba = (hex, alpha = 1) => {
   const r = parseInt(hex.slice(1, 3), 16);
   const g = parseInt(hex.slice(3, 5), 16);
@@ -186,23 +184,17 @@ export default function App() {
   const notifiedLowLightingZonesRef = useRef(new Set());
   const notifiedIsolatedZonesRef = useRef(new Set());
   const isSimulatingRef = useRef(false);
-  // FROZEN ALERT ZONES: Coordinates locked in at navigation start, never mutated.
-  // This is the single source of truth for all alert Markers during a navigation session.
   const frozenAlertZonesRef = useRef({ dangerZones: [], lowLightingZones: [], isolatedZones: [] });
-  // Tracks which route object & index the trail last drew up to.
-  // Allows filling ALL intermediate route coords between GPS ticks (no straight-line shortcuts).
   const trailStateRef = useRef({ routeCoords: null, lastIndex: -1 });
-  // ---- SHAKE-TO-SOS REFS ----
   const lastAccelRef = useRef({ x: 0, y: 0, z: 0 });
   const shakeCountRef = useRef(0);
   const shakeWindowStartRef = useRef(null);
   const shakeCountdownIntervalRef = useRef(null);
   const accelSubscriptionRef = useRef(null);
-  const sosCountdownActiveRef = useRef(false); // guard against double-trigger
-  // ---- FAKE CALL REFS ----
+  const sosCountdownActiveRef = useRef(false);
   const fakeCallTimerRef = useRef(null);
-  const ringtoneRef = useRef(null); // expo-av Sound object
-  const pulseAnim = useRef(new Animated.Value(0)).current; // incoming call ring pulse
+  const ringtoneRef = useRef(null);
+  const pulseAnim = useRef(new Animated.Value(0)).current;
   
   const [user, setUser] = useState(null); 
   const [authLoading, setAuthLoading] = useState(true);
@@ -214,27 +206,19 @@ export default function App() {
   const [routeScores, setRouteScores] = useState([]);
   const [selectedRouteIndex, setSelectedRouteIndex] = useState(0);
 
-  // DECOUPLED SCORING EFFECT
-  // Generates real-time math metrics only when local route payloads settle stably.
   useEffect(() => {
     if (!allRoutes || allRoutes.length === 0) {
       setRouteScores([]);
       return;
     }
 
-    const computed = allRoutes.map((route, index) => {
-      console.log(`\n--- App.js Routing Pass [${index}] ---`);
-      if (route && route.coords) console.log(`Route length:`, route.coords.length);
-
-      // All routes scored with the same neutral context — no index-based bias.
-      // The P20 location scores alone determine which route is safest.
+    const computed = allRoutes.map((route) => {
       return safeComputeRouteScore(route, { userMode: 'balanced' });
     });
 
     setRouteScores(computed);
   }, [allRoutes]);
 
-  // Auto-select the highest-scoring route once scores are ready
   useEffect(() => {
     if (!routeScores || routeScores.length === 0) return;
     let bestIdx = 0;
@@ -254,7 +238,6 @@ export default function App() {
   const [isNavigating, setIsNavigating] = useState(false);
   const [navigationRoute, setNavigationRoute] = useState(null);
   const [navigationLoading, setNavigationLoading] = useState(false);
-  // GPS-accumulated trail: grows with each real position tick. Never resets on reroute.
   const [visitedGpsTrail, setVisitedGpsTrail] = useState([]);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isSosOpen, setIsSosOpen] = useState(false);
@@ -274,9 +257,7 @@ export default function App() {
   const [editingReportId, setEditingReportId] = useState(null);
   const [editReportType, setEditReportType] = useState('Unsafe spot');
   const [editReportNote, setEditReportNote] = useState('');
-  // shakeCountdown: null = idle, 3/2/1 = counting down to SOS fire
   const [shakeCountdown, setShakeCountdown] = useState(null);
-  // fakeCallPhase: null | 'incoming' | 'active'
   const [fakeCallPhase, setFakeCallPhase] = useState(null);
   const [fakeCallSeconds, setFakeCallSeconds] = useState(0);
   const [profileForm, setProfileForm] = useState({
@@ -347,14 +328,8 @@ export default function App() {
     })();
   }, []);
 
-  // ============================================================
-  // SHAKE-TO-SOS ENGINE
-  // Listens to the accelerometer while a user is logged in.
-  // 3+ shakes within 1 second → launches 3s cancellable countdown.
-  // ============================================================
   useEffect(() => {
     if (!user) {
-      // Stop listener when user logs out
       if (accelSubscriptionRef.current) {
         accelSubscriptionRef.current.remove();
         accelSubscriptionRef.current = null;
@@ -362,11 +337,11 @@ export default function App() {
       return;
     }
 
-    const SHAKE_THRESHOLD = 1.5;    // delta G-force to count as a shake event
-    const SHAKE_COUNT_NEEDED = 3;   // number of events needed to trigger
-    const SHAKE_WINDOW_MS = 1000;   // all events must be within this window
+    const SHAKE_THRESHOLD = 1.5;
+    const SHAKE_COUNT_NEEDED = 3;
+    const SHAKE_WINDOW_MS = 1000;
 
-    Accelerometer.setUpdateInterval(80); // ~12 samples/sec — responsive but not wasteful
+    Accelerometer.setUpdateInterval(80);
 
     accelSubscriptionRef.current = Accelerometer.addListener(({ x, y, z }) => {
       const prev = lastAccelRef.current;
@@ -428,9 +403,6 @@ export default function App() {
     setShakeCountdown(null);
   };
 
-  // ============================================================
-  // FAKE CALL ENGINE — expo-av ringtone + iOS UI
-  // ============================================================
   const startFakeCall = async () => {
     setIsSosOpen(false);
     try {
@@ -441,7 +413,6 @@ export default function App() {
       );
       ringtoneRef.current = sound;
     } catch (e) {
-      // Fallback: silent if audio fails — UI still works
       console.log('[FakeCall] Audio failed:', e.message);
     }
     setTimeout(() => setFakeCallPhase('incoming'), 1200);
@@ -479,7 +450,6 @@ export default function App() {
     return `${m}:${s}`;
   };
 
-  // Pulse ring animation — runs only during incoming phase
   useEffect(() => {
     if (fakeCallPhase === 'incoming') {
       Animated.loop(
@@ -558,9 +528,6 @@ export default function App() {
         const nextRoute = await fetchRouteForProfile(userLocation, markers.end, selectedRouteIndex);
 
         if (nextRoute) {
-          // CRITICAL: Only update the polyline path + distance.
-          // Alert zone coordinates are FROZEN in frozenAlertZonesRef and must NEVER be re-snapped
-          // or re-assigned here. Re-assigning them causes Markers to unmount/remount and drift.
           nextRoute.safetyScore = routeScores[selectedRouteIndex]?.score || 0;
           setNavigationRoute(nextRoute);
           lastNavigationRefreshLocationRef.current = userLocation;
@@ -658,22 +625,14 @@ export default function App() {
     );
   };
 
-  /**
-   * =========================================================================
-   * ROUTE DEDUPLICATION ENGINE
-   * =========================================================================
-   * Evaluates polyline similarity to guarantee the UI only offers distinctly 
-   * different physical street pathways, discarding redundant micro-variants natively.
-   */
   const calculateRouteOverlap = (routeA, routeB) => {
     if (!routeA || !routeB || !routeA.coords || !routeB.coords) return 0;
-    
-    // Performance Optimization: Sample every 4th coordinate to prevent heavy O(N^2) CPU locking
+
     const pointsA = routeA.coords.filter((_, i) => i % 4 === 0);
     const pointsB = routeB.coords.filter((_, i) => i % 4 === 0);
-    
+
     let matchCount = 0;
-    const threshold = 0.0004; // ~40 meters strict Cartesian threshold constraint
+    const threshold = 0.0004;
 
     for (const pA of pointsA) {
       for (const pB of pointsB) {
@@ -685,7 +644,7 @@ export default function App() {
         }
       }
     }
-    
+
     return pointsA.length > 0 ? matchCount / pointsA.length : 0;
   };
 
@@ -693,28 +652,25 @@ export default function App() {
     if (!rawRoutes || rawRoutes.length <= 1) return rawRoutes;
 
     const filteredRoutes = [];
-    
+
     for (const currentRoute of rawRoutes) {
       let isDuplicate = false;
-      
+
       for (const existingRoute of filteredRoutes) {
         const overlapRatio = calculateRouteOverlap(currentRoute, existingRoute);
-        // If overlap > 0.8 (80%), mark as redundant duplicate path natively
         if (overlapRatio > 0.8) {
           isDuplicate = true;
           break;
         }
       }
-      
+
       if (!isDuplicate) {
         filteredRoutes.push(currentRoute);
       }
-      
-      if (filteredRoutes.length === 3) break; // Maximum 3 distinct routes allowed per spec
+
+      if (filteredRoutes.length === 3) break;
     }
 
-    // Safety fallback: if filtering destructively removed all alternatives natively, cleanly fallback 
-    // to returning the original base derivatives capping max arrays securely protecting Demo UI flow.
     if (filteredRoutes.length >= 2) {
       return filteredRoutes;
     } else if (rawRoutes.length >= 2) {
@@ -739,54 +695,40 @@ export default function App() {
       notifiedIsolatedZonesRef.current.clear();
     
     try {
-      console.log("1. Starting route fetch...");
-      
-      let startPoint = (startText.toLowerCase() === 'my location' && userLocation) 
-        ? userLocation 
+      let startPoint = (startText.toLowerCase() === 'my location' && userLocation)
+        ? userLocation
         : await getCoordsFromText(startText);
-      
+
       const endPoint = await getCoordsFromText(endText);
-      console.log("2. Coordinates found:", { startPoint, endPoint });
 
       if (startPoint && endPoint) {
         setMarkers({ start: startPoint, end: endPoint });
-        
-        console.log("3. Fetching from OpenRouteService...");
+
         const rawRoutes = await fetchRealRoute(startPoint, endPoint);
-        
-        console.log("4. Routes fetched. Deduplicating heavily clustered overlapping arrays natively...");
         const routes = filterDistinctRoutes(rawRoutes);
-        // ... inside handleFindRoute, after fetching routes:
+
   if (routes && routes.length > 0) {
-    // 1. Group by 100m to catch overlapping paths
     const roundedDistances = routes.map(r => Math.round(r.distance / 100) * 100);
-    // 2. Sort distances: DESCENDING (Longest [Safe] first)
     const uniqueDistances = [...new Set(roundedDistances)].sort((a, b) => b - a); 
 
     let processedRoutes = routes.map((route) => {
       const roundedDist = Math.round(route.distance / 100) * 100;
-      // tierIndex 0 = Longest (Safe), 1 = Balanced, 2 = Shortest (Risky)
-      const tierIndex = uniqueDistances.indexOf(roundedDist); 
-      
-      // VALIDATE ROUTE DATA: Prevents fatal index crashes or dividing by zero
+      const tierIndex = uniqueDistances.indexOf(roundedDist);
+
       if (!route || !route.coords || route.coords.length === 0) {
         return { ...route, dangerZones: [], lowLightingZones: [], isolatedZones: [] };
       }
 
-      // Create the deterministic seed based on GPS
       const midCoord = route.coords[Math.floor(route.coords.length / 2)];
       const seedStr = `${midCoord.latitude.toFixed(3)}-${midCoord.longitude.toFixed(3)}-${tierIndex}`;
       let hash = 0;
       for (let i = 0; i < seedStr.length; i++) {
         hash = Math.imul(31, hash) + seedStr.charCodeAt(i) | 0;
       }
-      const seed = Math.abs(hash % 10000) / 10000; 
+      const seed = Math.abs(hash % 10000) / 10000;
 
-      // Route evaluation has been fully decoupled to a React useEffect cycle.
-      
-      // Generate Danger Zones based on tierIndex
-      let numDangerZones = tierIndex === 0 ? Math.floor(seed * 2) : 
-                          tierIndex === 1 ? Math.floor(seed * 2) + 2 : 
+      let numDangerZones = tierIndex === 0 ? Math.floor(seed * 2) :
+                          tierIndex === 1 ? Math.floor(seed * 2) + 2 :
                           Math.floor(seed * 3) + 4;
 
       let numLowLighting = tierIndex === 0 ? 1 : tierIndex === 1 ? 2 : Math.floor(seed * 3) + 3;
@@ -814,28 +756,24 @@ export default function App() {
       return { ...route, dangerZones, lowLightingZones, isolatedZones };
     });
 
-    // Keep ORS natural route order — scoring+auto-select determines the best route, not distance
     setAllRoutes(processedRoutes);
     setSelectedRouteIndex(0);
     setIsMinimized(true);
-    
+
     mapRef.current?.fitToCoordinates(routes[0].coords, {
       edgePadding: { top: 150, right: 60, bottom: 450, left: 60 },
       animated: true,
     });
 } else {
-          console.warn("API returned empty routes.");
           setAllRoutes([]);
         }
       } else {
-        console.warn("Could not resolve start or end coordinates.");
+        alert('Could not resolve locations. Please check your inputs.');
       }
     } catch (error) {
-      console.error("🔥 FATAL ERROR in handleFindRoute:", error);
-      alert("Failed to fetch route. Check console for details.");
+      alert('Failed to fetch route. Please try again.');
     } finally {
-      console.log("5. Finished processing. Stopping loader.");
-      setLoading(false); 
+      setLoading(false);
     }
   };
 
@@ -867,7 +805,6 @@ export default function App() {
     const targetLabel = isPolice ? 'Police' : 'Emergency Contact';
     setIsSosOpen(false);
 
-    // 1. Generate Emergency ID
     const emergencyId = `user-${Date.now()}`;
     await AsyncStorage.setItem('active_emergency_id', emergencyId);
     let routeStart = 'Unknown';
@@ -879,13 +816,10 @@ export default function App() {
       routeEnd = endText;
     }
 
-    // IMMEDIATELY PING SERVER ONCE (Crucial for stationary testing)
-    console.log(`[SOS] Starting tracking. Backend: ${BACKEND_URL}, ID: ${emergencyId}`);
-    
     if (userLocation) {
       fetch(`${BACKEND_URL}/update-location`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'ngrok-skip-browser-warning': 'true'
         },
@@ -900,21 +834,16 @@ export default function App() {
       }).catch(e => console.log('Init SOS POST error:', e));
     }
 
-    // IMMEDIATELY DRAFT SMS (Don't let location permissions block this)
     const trackingLink = `${BACKEND_URL}/live/${emergencyId}`;
     const smsMessage = `SOS! I am in a critical situation.\n\nTrack my live location here:\n${trackingLink}`;
-    console.log(`[SOS] Link: ${trackingLink}`);
 
     const isAllowed = await SMS.isAvailableAsync();
-    console.log(`[SMS] isAvailable: ${isAllowed}, Contacts: ${JSON.stringify(contacts)}`);
 
     const handleSms = async () => {
       try {
         if (isAllowed && !isPolice) {
-          // Small timeout to let UI settle/modal close on iOS
           setTimeout(async () => {
-            const { result } = await SMS.sendSMSAsync(contacts, smsMessage);
-            console.log(`[SMS] Result: ${result}`);
+            await SMS.sendSMSAsync(contacts, smsMessage);
           }, 600);
         } else {
           Alert.alert(
@@ -938,7 +867,6 @@ export default function App() {
       }
     };
 
-    // 2. Start Logic (Don't await tracking setup to avoid blocking SMS)
     (async () => {
       try {
         const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
@@ -956,15 +884,14 @@ export default function App() {
           });
         }
       } catch (e) {
-        console.log("[SOS] Background tracking skipped:", e.message);
+        console.log('[SOS] Background tracking skipped:', e.message);
       }
     })();
 
-    // 3. One-time initial ping
     if (userLocation) {
       fetch(`${BACKEND_URL}/update-location`, {
         method: 'POST',
-        headers: { 
+        headers: {
           'Content-Type': 'application/json',
           'ngrok-skip-browser-warning': 'true'
         },
@@ -976,13 +903,12 @@ export default function App() {
           startedFrom: routeStart,
           destination: routeEnd
         })
-      }).catch(e => console.log('[SOS] Init Ping error:', e.message));
+      }).catch(e => console.log('[SOS] Ping error:', e.message));
     }
 
-    // 4. Trigger SMS & Dialer
     await handleSms();
 
-    if (isPolice || !isAllowed) { // If police, or if SMS handled by alert
+    if (isPolice || !isAllowed) {
        if (isPolice) {
           const phoneUrl = `tel:${primaryPhone}`;
           Linking.openURL(phoneUrl);
@@ -990,7 +916,6 @@ export default function App() {
     }
   };
 
-  // 🛡️ CRITICAL ERROR FIX: Safety check for empty routes
   const handleStartNavigation = async () => {
     if (!markers?.end || !userLocation) {
       Alert.alert('Navigation unavailable', 'Live location is required before navigation can start.');
@@ -1010,9 +935,6 @@ export default function App() {
       const originalRoute = allRoutes[selectedRouteIndex];
       liveRoute.safetyScore = routeScores[selectedRouteIndex]?.score || 0;
 
-      // FREEZE alert zone coordinates once at navigation start.
-      // These coords will NEVER change for the entire navigation session,
-      // ensuring Markers are always stationary and never drift on reroute.
       frozenAlertZonesRef.current = {
         dangerZones: originalRoute?.dangerZones || [],
         lowLightingZones: originalRoute?.lowLightingZones || [],
@@ -1022,7 +944,6 @@ export default function App() {
       setNavigationRoute(liveRoute);
       setIsNavigating(true);
       clearArrivalMessage();
-      // Reset trail state — the useEffect will seed on the very first GPS tick.
       setVisitedGpsTrail([]);
       trailStateRef.current = { routeCoords: null, lastIndex: -1 };
       lastNavigationRefreshLocationRef.current = userLocation;
@@ -1064,7 +985,6 @@ export default function App() {
     notifiedDangerZonesRef.current.clear();
     notifiedLowLightingZonesRef.current.clear();
     notifiedIsolatedZonesRef.current.clear();
-    // Clear the frozen zones so they don't leak into the next session.
     frozenAlertZonesRef.current = { dangerZones: [], lowLightingZones: [], isolatedZones: [] };
 
     if (currentRoute?.coords?.length) {
@@ -1127,7 +1047,6 @@ export default function App() {
     }
   }, [isNavigating, markers, navigationRoute, userLocation, handleCompleteNavigation]);
 
-  // 🔴 200m Proximity Check — reads from frozenAlertZonesRef (stationary, immutable coords).
   useEffect(() => {
     if (!isNavigating || !userLocation) {
       return;
@@ -1160,11 +1079,6 @@ export default function App() {
     });
   }, [isNavigating, userLocation]);
 
-  // 🩶 ROUTE-SNAPPED TRAIL ENGINE
-  // On every GPS tick, finds user's closest index on the route and appends ALL intermediate
-  // route coords since the last index — so the trail follows every road curve, not straight lines.
-  // trailStateRef tracks the current route object identity + last index drawn,
-  // so it resets cleanly when a reroute fetches a new coords array.
   useEffect(() => {
     if (!isNavigating || !userLocation || !navigationRoute?.coords?.length) return;
 
@@ -1173,15 +1087,12 @@ export default function App() {
     const currentIdx = getClosestCoordIndex(coords, userLocation);
 
     if (state.routeCoords !== coords) {
-      // New route (nav start or reroute): initialise tracker at current position.
       trailStateRef.current = { routeCoords: coords, lastIndex: currentIdx };
-      // Append the current route point to keep the trail visually connected.
       setVisitedGpsTrail(prev => [...prev, coords[currentIdx]]);
       return;
     }
 
     if (currentIdx > state.lastIndex) {
-      // Fill EVERY coord between last drawn index and current index.
       const newSegment = coords.slice(state.lastIndex + 1, currentIdx + 1);
       trailStateRef.current = { routeCoords: coords, lastIndex: currentIdx };
       if (newSegment.length > 0) {
@@ -1226,7 +1137,6 @@ export default function App() {
     };
     setUserLocation(updatedLocation);
 
-    // Sync simulated movement to live tracker dashboard
     (async () => {
       try {
         const emergencyId = await AsyncStorage.getItem('active_emergency_id');
@@ -1484,7 +1394,6 @@ export default function App() {
       >
         {isNavigating && navigationRoute ? (
           <>
-            {/* FULL active route — always full coords, grey trail paints on top */}
             <Polyline
               key="active-navigation-route"
               coordinates={navigationRoute.displayCoords || navigationRoute.coords}
@@ -1495,8 +1404,6 @@ export default function App() {
               lineCap="round"
               lineDashPattern={[0]}
             />
-            {/* GPS TRAIL: Actual path walked — grows permanently, never collapses on reroute.
-                Painted on top of the colored route (zIndex 1001) to hide covered segments. */}
             {visitedGpsTrail.length >= 2 && (
               <Polyline
                 key="nav-trail-visited"
@@ -1509,8 +1416,6 @@ export default function App() {
                 lineDashPattern={[0]}
               />
             )}
-            {/* STATIONARY ALERT MARKERS: Always read from frozenAlertZonesRef, never from navigationRoute.
-                Keys are coordinate-based hashes to guarantee React never unmounts/remounts these Markers. */}
             {frozenAlertZonesRef.current.dangerZones.map((zoneCoord, zIndex) => (
               <Marker 
                 key={`nav-danger-${zoneCoord.latitude.toFixed(6)}-${zoneCoord.longitude.toFixed(6)}`} 
@@ -1863,10 +1768,6 @@ export default function App() {
         </View>
       </Animated.View>
 
-      {/* ============================================================
-          SHAKE-TO-SOS COUNTDOWN OVERLAY
-          Full-screen urgent overlay that gives 3 seconds to cancel.
-          ============================================================ */}
       {shakeCountdown !== null && (
         <View style={styles.shakeCountdownOverlay}>
           <View style={styles.shakeCountdownCard}>
@@ -2325,18 +2226,13 @@ export default function App() {
         </View>
       </Modal>
 
-      {/* ================================================================
-          FAKE CALL — iOS 17 INCOMING CALL SCREEN
-          ================================================================ */}
       {fakeCallPhase === 'incoming' && (
         <View style={styles.iosCallBg}>
           <StatusBar barStyle="light-content" />
 
-          {/* Top info */}
           <View style={styles.iosCallTopInfo}>
             <Text style={styles.iosCallIncomingLabel}>INCOMING CALL</Text>
 
-            {/* Animated pulse ring behind avatar */}
             <View style={styles.iosCallAvatarWrap}>
               <Animated.View style={[
                 styles.iosCallPulseRing,
@@ -2354,7 +2250,6 @@ export default function App() {
             <Text style={styles.iosCallSub}>mobile</Text>
           </View>
 
-          {/* Quick actions */}
           <View style={styles.iosCallQuickRow}>
             <View style={styles.iosCallQuickBtn}>
               <View style={styles.iosCallQuickIcon}>
@@ -2370,7 +2265,6 @@ export default function App() {
             </View>
           </View>
 
-          {/* Decline / Accept */}
           <View style={styles.iosCallActionRow}>
             <View style={styles.iosCallActionWrap}>
               <TouchableOpacity style={styles.iosCallDecline} onPress={endFakeCall}>
@@ -2388,27 +2282,21 @@ export default function App() {
         </View>
       )}
 
-      {/* ================================================================
-          FAKE CALL — iOS 17 ACTIVE CALL SCREEN
-          ================================================================ */}
       {fakeCallPhase === 'active' && (
         <View style={styles.iosCallBg}>
           <StatusBar barStyle="light-content" />
 
           <View style={styles.iosCallTopInfo}>
-            {/* Mini avatar */}
             <View style={styles.iosCallMiniAvatar}>
               <Text style={styles.iosCallMiniAvatarText}>M</Text>
             </View>
             <Text style={styles.iosCallName}>Mom</Text>
-            {/* Green connected dot + timer */}
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 }}>
               <View style={styles.iosCallConnectedDot} />
               <Text style={styles.iosCallTimer}>{formatCallTime(fakeCallSeconds)}</Text>
             </View>
           </View>
 
-          {/* 2×3 control grid — iOS style */}
           <View style={styles.iosCallGrid}>
             {[
               { icon: 'mic-off',     label: 'mute'     },
@@ -2427,7 +2315,6 @@ export default function App() {
             ))}
           </View>
 
-          {/* End call */}
           <TouchableOpacity style={styles.iosCallEndBtn} onPress={endFakeCall}>
             <Ionicons name="call" size={34} color="#FFF" style={{ transform: [{ rotate: '135deg' }] }} />
           </TouchableOpacity>
@@ -2677,7 +2564,6 @@ const styles = StyleSheet.create({
   sosOptionSub: { color: '#888', fontSize: 12, marginTop: 4, lineHeight: 18 },
   sosCancelBtn: { alignItems: 'center', justifyContent: 'center', paddingTop: 6, paddingBottom: 8 },
   sosCancelText: { color: '#888', fontSize: 15, fontWeight: '700' },
-  // Shake-to-SOS countdown overlay
   shakeCountdownOverlay: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
     backgroundColor: 'rgba(180,0,0,0.88)',
@@ -2714,10 +2600,9 @@ const styles = StyleSheet.create({
   shakeCountdownCancelText: {
     color: '#FFF', fontWeight: '900', fontSize: 16, letterSpacing: 2,
   },
-  // iOS 17 Fake Call screens
   iosCallBg: {
     position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
-    backgroundColor: '#1A3A2A', // deep green tint — iOS contacts default
+    backgroundColor: '#1A3A2A',
     zIndex: 99999,
     justifyContent: 'space-between',
     paddingTop: 60,
@@ -2743,14 +2628,12 @@ const styles = StyleSheet.create({
     borderWidth: 3,
     borderColor: 'rgba(255,255,255,0.15)',
   },
-  // Wrapper: bigger than avatar so the ring has room to show outside the avatar
   iosCallAvatarWrap: {
     width: 140, height: 140,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 18,
   },
-  // Ring fills the entire wrapper via inset 0 — perfectly centered behind the 100px avatar
   iosCallPulseRing: {
     position: 'absolute',
     top: 0, left: 0, right: 0, bottom: 0,
@@ -2759,7 +2642,6 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(46,125,82,0.85)',
     backgroundColor: 'transparent',
   },
-  // Mini avatar for active call screen
   iosCallMiniAvatar: {
     width: 56, height: 56, borderRadius: 28,
     backgroundColor: '#2E7D52',
@@ -2774,7 +2656,6 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '600',
   },
-  // Green dot for "connected" status
   iosCallConnectedDot: {
     width: 8, height: 8, borderRadius: 4,
     backgroundColor: '#34C759',

@@ -1,5 +1,3 @@
-// RouteService.js
-
 const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjI1Yjg3OTdiYjFmYTQzMzQ5MDYwODk2MTNlZjQ3MjBhIiwiaCI6Im11cm11cjY0In0=';
 
 const ROUTE_PROFILES = [
@@ -8,9 +6,6 @@ const ROUTE_PROFILES = [
   { name: 'driving-car', pref: 'fastest' }
 ];
 
-/**
- * Converts a string address (e.g., "Red Fort") into {latitude, longitude}
- */
 export const getCoordsFromText = async (text) => {
   try {
     const url = `https://api.openrouteservice.org/geocode/search?api_key=${ORS_API_KEY}&text=${text}&boundary.country=IN&size=1`;
@@ -35,9 +30,6 @@ export const fetchRealRoute = async (start, end) => {
 
     return results.map((data, index) => {
       const feature = data.features[0];
-      
-      // 💡 THE TRICK: Add a tiny offset (0.0001) to Path 2 and Path 3 
-      // This ensures they appear as separate colored lines on the map.
       const offset = index === 1 ? 0.00008 : index === 2 ? -0.00008 : 0;
 
       return {
@@ -46,7 +38,7 @@ export const fetchRealRoute = async (start, end) => {
           longitude: c[0]
         })),
         displayCoords: feature.geometry.coordinates.map(c => ({
-          latitude: c[1] + offset, 
+          latitude: c[1] + offset,
           longitude: c[0] + offset
         })),
         distance: feature.properties.summary.distance,

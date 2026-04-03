@@ -239,83 +239,67 @@ export const evaluateSafety = (point, context = {}) => {
 };
 
 /**
- * 5. ROUTE-WIDE EXECUTION MAP
- * Generates an end-to-end dictionary tracing physical lines iteratively across the model.
+ * 5. ROUTE-WIDE SAFETY EVALUATION — P20 Location Scoring
+ *
+ * Every coordinate on the route is scored as an equal location.
+ * Distance plays no role. The final score is the 20th percentile
+ * of all location scores — i.e. how safe the worst 20% of the
+ * route actually is. A single dangerous corridor drags the score
+ * down regardless of how short or long it is.
+ *
  * @param {Array} routePoints Array of {latitude, longitude}
- * @param {object} context 
+ * @param {object} context { timeOfDay, userMode }
+ * @returns {{ score, category, confidence, reasoning }}
  */
 export const evaluateRoute = (routePoints, context = {}) => {
-  if (!routePoints || routePoints.length < 2) return { score: 5.5, reasoning: ["Invalid Polyline Mapping"], confidence: 0 };
+  if (!routePoints || routePoints.length < 2) {
+    return { score: 5.5, category: 'Balanced', reasoning: ['Invalid route'], confidence: 0 };
+  }
 
-  let totalSafetySum = 0;
-  let totalDistance = 0;
+  const locationScores = [];
   let minConfidence = 1.0;
-  let minSegmentScore = 10.0; // Track the most dangerous isolated segment
-  let allReasoning = new Set(); 
+  let worstScore = 10.0;
+  const allReasoning = new Set();
 
-  for (let i = 1; i < routePoints.length; i++) {
-    const prev = routePoints[i - 1];
-    const curr = routePoints[i];
+  // Score every node as a location — no distance involved anywhere
+  for (let i = 0; i < routePoints.length; i++) {
+    const result = evaluateSafety(routePoints[i], context);
 
-    // Approximate km scaling (accounting for spherical projection)
-    const dx = (curr.latitude - prev.latitude) * 111;
-    const dy = (curr.longitude - prev.longitude) * 111 * Math.cos((curr.latitude * Math.PI) / 180);
-    const dist = Math.sqrt(dx * dx + dy * dy);
+    locationScores.push(result.totalScore);
 
-    const pointEvaluation = evaluateSafety(curr, context);
-
-    totalSafetySum += pointEvaluation.totalScore * dist;
-    totalDistance += dist;
-    
-    if (pointEvaluation.totalScore < minSegmentScore) minSegmentScore = pointEvaluation.totalScore;
-    if (pointEvaluation.confidenceScore < minConfidence) minConfidence = pointEvaluation.confidenceScore;
-    pointEvaluation.reasoning.forEach(r => allReasoning.add(r));
+    if (result.totalScore < worstScore) worstScore = result.totalScore;
+    if (result.confidenceScore < minConfidence) minConfidence = result.confidenceScore;
+    result.reasoning.forEach(r => allReasoning.add(r));
   }
 
-  if (totalDistance === 0) return { score: 5.5, category: "Balanced", reasoning: ["0 Distance Route"], confidence: 0 };
+  // Sort ascending so index 0 = most dangerous location
+  locationScores.sort((a, b) => a - b);
 
-  const avgSafety = totalSafetySum / totalDistance;
+  // P20: value at the 20th percentile — reflects how bad the worst fifth of the route is
+  const p20Index = Math.max(0, Math.floor(locationScores.length * 0.20) - 1);
+  let finalScore = locationScores[p20Index];
 
-  // Non-linear bottleneck penalty: exponentially scales choke-point punishment.
-  // Calibrated scale factor guarantees penalty never overpowers the absolute valid safety signal.
-  const severity = (10 - minSegmentScore) / 10;
-  const bottleneckPenalty = Math.pow(severity, 2) * 2.0;
-  
-  let finalScore = (avgSafety * 0.85) + (minSegmentScore * 0.15);
+  // Bottleneck penalty: if there's a single location worse than P20, apply extra pressure
+  // Using a softer scale (1.5) since P20 is already pessimistic
+  const severity = (10 - worstScore) / 10;
+  const bottleneckPenalty = Math.pow(severity, 2) * 1.5;
   finalScore -= bottleneckPenalty;
-
-  // Safety priority bias: formally expands ranking differentials preventing central clustering natively.
-  finalScore += (avgSafety - 5) * 0.3;
-
-  // Enforce safety dominance ordering bias
-  if (context.userMode === "highSafety") {
-    finalScore += 0.3;
-  } else if (context.userMode === "fastest") {
-    finalScore -= 0.3;
-  }
-
-  // Slight deterministic bias based on mode (handle absolute identical routes)
-  if (context.userMode === "highSafety") finalScore += 0.1;
-  if (context.userMode === "fastest") finalScore -= 0.1;
-
-  // Hard metric constraint: guarantees mathematical ranking inversion bugs cannot physically occur
-  if (finalScore < minSegmentScore) {
-    finalScore = minSegmentScore;
-  }
 
   const score = parseFloat(Math.min(10, Math.max(0, finalScore)).toFixed(1));
 
-  let category = "Balanced";
-  if (score >= 7) category = "Safe";
-  else if (score < 4) category = "High Risk";
+  let category = 'Balanced';
+  if (score >= 7) category = 'Safe';
+  else if (score < 4) category = 'High Risk';
 
   return {
     score,
     category,
     confidence: minConfidence,
-    reasoning: Array.from(allReasoning)
+    reasoning: Array.from(allReasoning),
   };
 };
+
+
 
 /**
  * 6. SENSITIVITY STABILITY TESTING

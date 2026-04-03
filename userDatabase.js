@@ -126,3 +126,11 @@ export async function updateActiveUserProfile(updates) {
 
   return nextUser;
 }
+
+export async function deleteAccount(userId) {
+  const users = await readUsers();
+  const filtered = users.filter((u) => u.id !== userId);
+  await writeUsers(filtered);
+  await AsyncStorage.removeItem(SESSION_STORAGE_KEY);
+}
+

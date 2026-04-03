@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import AuthScreen from './AuthScreen';
 import { fetchRealRoute, fetchRouteForProfile, getCoordsFromText } from './RouteService';
-import { getActiveUser, logoutUser, updateActiveUserProfile } from './userDatabase';
+import { getActiveUser, logoutUser, updateActiveUserProfile, deleteAccount } from './userDatabase';
 import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports, saveCompletedTrip, saveTripReport } from './tripReports';
 
 import * as SMS from 'expo-sms';
@@ -225,18 +225,28 @@ export default function App() {
     const computed = allRoutes.map((route, index) => {
       console.log(`\n--- App.js Routing Pass [${index}] ---`);
       if (route && route.coords) console.log(`Route length:`, route.coords.length);
-      
-      const contextMap = {
-        0: { userMode: "highSafety" },
-        1: { userMode: "balanced" },
-        2: { userMode: "fastest" }
-      };
 
-      return safeComputeRouteScore(route, contextMap[index] || {});
+      // All routes scored with the same neutral context — no index-based bias.
+      // The P20 location scores alone determine which route is safest.
+      return safeComputeRouteScore(route, { userMode: 'balanced' });
     });
 
     setRouteScores(computed);
   }, [allRoutes]);
+
+  // Auto-select the highest-scoring route once scores are ready
+  useEffect(() => {
+    if (!routeScores || routeScores.length === 0) return;
+    let bestIdx = 0;
+    let bestScore = -1;
+    routeScores.forEach((s, i) => {
+      if (s && s.score > bestScore) {
+        bestScore = s.score;
+        bestIdx = i;
+      }
+    });
+    setSelectedRouteIndex(bestIdx);
+  }, [routeScores]);
   const [loading, setLoading] = useState(false);
   const [markers, setMarkers] = useState(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -625,6 +635,29 @@ export default function App() {
     setIsProfileOpen(false);
   };
 
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure? All your data will be permanently removed. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount(user.id);
+              setIsProfileOpen(false);
+              setUser(null);
+            } catch (e) {
+              Alert.alert('Error', 'Could not delete account. Please try again.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   /**
    * =========================================================================
    * ROUTE DEDUPLICATION ENGINE
@@ -781,8 +814,7 @@ export default function App() {
       return { ...route, dangerZones, lowLightingZones, isolatedZones };
     });
 
-    // UI default sorting is preserved via distance rather than raw scores before the effect fires
-    processedRoutes.sort((a, b) => b.distance - a.distance);
+    // Keep ORS natural route order — scoring+auto-select determines the best route, not distance
     setAllRoutes(processedRoutes);
     setSelectedRouteIndex(0);
     setIsMinimized(true);
@@ -1411,15 +1443,14 @@ export default function App() {
   };
 
   const getRouteTheme = (index) => {
-    // GUARD: Ensure the scores are loaded from the decoupled React state before rendering UI
     if (!routeScores[index]) {
       return { color: '#888', score: 0, label: '⏱️ ANALYZING...' };
     }
-    
-    const realScore = routeScores[index].score; 
 
-    if (index === 0) return { color: '#00FF94', score: realScore, label: '🛡️ MAXIMUM SAFETY' };
-    if (index === 1) return { color: '#FF9500', score: realScore, label: '🛣️ BALANCED' };
+    const realScore = routeScores[index].score;
+
+    if (realScore >= 7) return { color: '#00FF94', score: realScore, label: '🛡️ SAFE ROUTE' };
+    if (realScore >= 5) return { color: '#FF9500', score: realScore, label: '🛣️ MODERATE' };
     return { color: '#FF3B30', score: realScore, label: '⚠️ HIGH RISK' };
   };
 
@@ -2233,6 +2264,11 @@ export default function App() {
             <TouchableOpacity style={[styles.profileSaveBtn, { backgroundColor: activeTheme.color }]} onPress={handleSaveProfile}>
               <Text style={styles.profileSaveText}>Save Profile</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.profileDeleteBtn} onPress={handleDeleteAccount}>
+              <Ionicons name="trash-outline" size={16} color="#FF3B30" style={{ marginRight: 6 }} />
+              <Text style={styles.profileDeleteText}>Delete Account</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -2544,6 +2580,18 @@ const styles = StyleSheet.create({
   profileInput: { backgroundColor: '#111', borderWidth: 1, borderColor: '#222', borderRadius: 16, paddingHorizontal: 18, height: 56, fontSize: 15 },
   profileInputDisabled: { opacity: 0.65 },
   profileSaveBtn: { height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
+  profileDeleteBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  profileDeleteText: { color: '#FF3B30', fontSize: 14, fontWeight: '600' },
   profileSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
   emptyReportsState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 40 },
   emptyReportsTitle: { fontSize: 20, fontWeight: '900', marginTop: 16 },

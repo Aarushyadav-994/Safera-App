@@ -233,6 +233,20 @@ export default function App() {
 
     setRouteScores(computed);
   }, [allRoutes]);
+
+  // Auto-select the highest-scoring route once scores are ready
+  useEffect(() => {
+    if (!routeScores || routeScores.length === 0) return;
+    let bestIdx = 0;
+    let bestScore = -1;
+    routeScores.forEach((s, i) => {
+      if (s && s.score > bestScore) {
+        bestScore = s.score;
+        bestIdx = i;
+      }
+    });
+    setSelectedRouteIndex(bestIdx);
+  }, [routeScores]);
   const [loading, setLoading] = useState(false);
   const [markers, setMarkers] = useState(null);
   const [isMinimized, setIsMinimized] = useState(false);
@@ -800,8 +814,7 @@ export default function App() {
       return { ...route, dangerZones, lowLightingZones, isolatedZones };
     });
 
-    // UI default sorting is preserved via distance rather than raw scores before the effect fires
-    processedRoutes.sort((a, b) => b.distance - a.distance);
+    // Keep ORS natural route order — scoring+auto-select determines the best route, not distance
     setAllRoutes(processedRoutes);
     setSelectedRouteIndex(0);
     setIsMinimized(true);
@@ -1430,15 +1443,14 @@ export default function App() {
   };
 
   const getRouteTheme = (index) => {
-    // GUARD: Ensure the scores are loaded from the decoupled React state before rendering UI
     if (!routeScores[index]) {
       return { color: '#888', score: 0, label: '⏱️ ANALYZING...' };
     }
-    
-    const realScore = routeScores[index].score; 
 
-    if (index === 0) return { color: '#00FF94', score: realScore, label: '🛡️ MAXIMUM SAFETY' };
-    if (index === 1) return { color: '#FF9500', score: realScore, label: '🛣️ BALANCED' };
+    const realScore = routeScores[index].score;
+
+    if (realScore >= 7) return { color: '#00FF94', score: realScore, label: '🛡️ SAFE ROUTE' };
+    if (realScore >= 5) return { color: '#FF9500', score: realScore, label: '🛣️ MODERATE' };
     return { color: '#FF3B30', score: realScore, label: '⚠️ HIGH RISK' };
   };
 

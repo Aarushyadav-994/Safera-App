@@ -10,7 +10,7 @@ import { Ionicons } from '@expo/vector-icons';
 
 import AuthScreen from './AuthScreen';
 import { fetchRealRoute, fetchRouteForProfile, getCoordsFromText } from './RouteService';
-import { getActiveUser, logoutUser, updateActiveUserProfile } from './userDatabase';
+import { getActiveUser, logoutUser, updateActiveUserProfile, deleteAccount } from './userDatabase';
 import { clearTripHistory, getCompletedTrips, getTripReports, replaceTripReports, saveCompletedTrip, saveTripReport } from './tripReports';
 
 import * as SMS from 'expo-sms';
@@ -623,6 +623,29 @@ export default function App() {
     const updatedUser = await updateActiveUserProfile(profileForm);
     setUser(updatedUser);
     setIsProfileOpen(false);
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      'Delete Account',
+      'Are you sure? All your data will be permanently removed. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await deleteAccount(user.id);
+              setIsProfileOpen(false);
+              setUser(null);
+            } catch (e) {
+              Alert.alert('Error', 'Could not delete account. Please try again.');
+            }
+          },
+        },
+      ]
+    );
   };
 
   /**
@@ -2233,6 +2256,11 @@ export default function App() {
             <TouchableOpacity style={[styles.profileSaveBtn, { backgroundColor: activeTheme.color }]} onPress={handleSaveProfile}>
               <Text style={styles.profileSaveText}>Save Profile</Text>
             </TouchableOpacity>
+
+            <TouchableOpacity style={styles.profileDeleteBtn} onPress={handleDeleteAccount}>
+              <Ionicons name="trash-outline" size={16} color="#FF3B30" style={{ marginRight: 6 }} />
+              <Text style={styles.profileDeleteText}>Delete Account</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -2544,6 +2572,18 @@ const styles = StyleSheet.create({
   profileInput: { backgroundColor: '#111', borderWidth: 1, borderColor: '#222', borderRadius: 16, paddingHorizontal: 18, height: 56, fontSize: 15 },
   profileInputDisabled: { opacity: 0.65 },
   profileSaveBtn: { height: 56, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginTop: 18 },
+  profileDeleteBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 44,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#FF3B30',
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  profileDeleteText: { color: '#FF3B30', fontSize: 14, fontWeight: '600' },
   profileSaveText: { color: '#000', fontWeight: '900', fontSize: 15 },
   emptyReportsState: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingVertical: 40 },
   emptyReportsTitle: { fontSize: 20, fontWeight: '900', marginTop: 16 },
